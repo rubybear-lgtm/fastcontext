@@ -12,7 +12,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context as McpContext
 from mlx_lm import load, generate
 
 from fastcontext.agent.agent import Agent
@@ -135,8 +135,69 @@ def _make_agent(work_dir: str, traj_path: str) -> Agent:
     )
 
 
+async def _report(ctx, progress, total, message):
+    if ctx:
+        try:
+            await ctx.report_progress(progress, total, message)
+        except Exception:
+            pass
+
+
+async def _run_agent_with_progress(agent, query, max_turns, ctx):
+    """Run the agent loop with MCP progress reporting."""
+    steps = []
+    await agent.context.add(Message(role="system", content=agent.system_prompt))
+    await agent.context.add(Message(role="user", content=query))
+
+    for turn in range(1, max_turns + 2):
+        if turn > max_turns:
+            await agent.context.add(Message(
+                role="user",
+                content="Max number of turns reached. Please provide the final answer based on the information you have gathered.",
+            ))
+
+        await _report(ctx,turn - 1, max_turns, f"Turn {turn}/{max_turns}: thinking...")
+
+        try:
+            step_msg = await agent.llm.acall(
+                messages=agent.context.get_messages(),
+                tools=agent.toolset.schema_list(),
+            )
+        except RequestyAPIError as e:
+            return f"LLM error: {e}", steps
+
+        await agent.context.add(step_msg)
+
+        if step_msg.tool_calls:
+            for tc in step_msg.tool_calls:
+                args = json.loads(tc.arguments) if tc.arguments else {}
+                summary = _summarize_tool_call(tc.name, args)
+                steps.append(f"[turn {turn}] {summary}")
+                await _report(ctx,turn - 1, max_turns, f"Turn {turn}/{max_turns}: {summary}")
+
+            tools_result_msg = await agent.toolset.call(step_msg)
+            await agent.context.add(tools_result_msg)
+        else:
+            await _report(ctx,max_turns, max_turns, "Done")
+            return get_final_answer(step_msg.content), steps
+
+    return "No final answer after max turns.", steps
+
+
+def _summarize_tool_call(name, args):
+    if name == "Read":
+        return f"Read {args.get('file_path', '?')}"
+    if name == "Glob":
+        return f"Glob {args.get('pattern', '?')}"
+    if name == "Grep":
+        pattern = args.get("pattern", "?")
+        path = args.get("path", "")
+        return f"Grep '{pattern}'" + (f" in {path}" if path else "")
+    return f"{name}({args})"
+
+
 @mcp.tool()
-async def fastcontext_explore(query: str, max_turns: int = 4) -> str:
+async def fastcontext_explore(query: str, max_turns: int = 4, ctx: McpContext = None) -> str:
     """Explore a codebase using FastContext's parallel search agent.
 
     Runs Read, Glob, and Grep operations in parallel using a local MLX model,
@@ -157,8 +218,19 @@ async def fastcontext_explore(query: str, max_turns: int = 4) -> str:
 
     try:
         agent = _make_agent(work_dir, traj_path)
-        result = await agent.run(prompt=query, max_turns=max_turns, citation=True)
-        return result or "No results found."
+        if ctx:
+            await _report(ctx,0, max_turns, "Starting exploration...")
+        result, steps = await _run_agent_with_progress(agent, query, max_turns, ctx)
+
+        output = []
+        if steps:
+            output.append("## Exploration steps")
+            for s in steps:
+                output.append(f"- {s}")
+            output.append("")
+        output.append("## Result")
+        output.append(result or "No results found.")
+        return "\n".join(output)
     finally:
         Path(traj_path).unlink(missing_ok=True)
 
