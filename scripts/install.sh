@@ -32,38 +32,35 @@ echo "      Installed into $VENV_DIR"
 # 3. Register MCP server in Claude Code settings
 # -------------------------------------------------------------------
 echo "[3/4] Registering MCP server..."
-SETTINGS_FILE="${HOME}/.claude/settings.json"
+MCP_FILE="${HOME}/.mcp.json"
 
-if [ -f "$SETTINGS_FILE" ]; then
-    "$PYTHON" -c "
+"$PYTHON" -c "
 import json
+from pathlib import Path
 
-path = '$SETTINGS_FILE'
+path = Path('$MCP_FILE')
 venv = '$VENV_DIR'
 
-with open(path) as f:
-    settings = json.load(f)
+if path.exists():
+    with open(path) as f:
+        config = json.load(f)
+else:
+    config = {}
 
-mcp_key = 'mcpServers'
-if mcp_key not in settings:
-    settings[mcp_key] = {}
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
 
-if 'fastcontext' in settings[mcp_key]:
+if 'fastcontext' in config['mcpServers']:
     print('      MCP server already registered.')
 else:
-    settings[mcp_key]['fastcontext'] = {
+    config['mcpServers']['fastcontext'] = {
         'command': f'{venv}/bin/fastcontext-mcp',
         'args': [],
     }
     with open(path, 'w') as f:
-        json.dump(settings, f, indent=2)
-    print('      MCP server added to', path)
+        json.dump(config, f, indent=2)
+    print('      MCP server added to', str(path))
 "
-else
-    echo "      WARNING: $SETTINGS_FILE not found."
-    echo "      Manually add to your MCP config:"
-    echo "        \"fastcontext\": {\"command\": \"$VENV_DIR/bin/fastcontext-mcp\"}"
-fi
 
 # -------------------------------------------------------------------
 # 4. Verify
@@ -78,6 +75,6 @@ print('      Model loaded in-process.')
 echo ""
 echo "=== Done ==="
 echo "  Server: $VENV_DIR/bin/fastcontext-mcp"
-echo "  MCP:    Registered in ~/.claude/settings.json"
+echo "  MCP:    Registered in ~/.mcp.json"
 echo ""
 echo "Restart Claude Code to activate the MCP server."
