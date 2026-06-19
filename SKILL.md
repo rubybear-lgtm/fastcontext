@@ -14,16 +14,16 @@ This skill runs the fine-tuned `mattrobenolt/FastContext-1.0-4B-SFT-mlx-bf16` mo
 Before first use, check if FastContext is installed. Run this verification:
 
 ```bash
-python3 -c "from fastcontext.agent.agent_factory import make_fastcontext_agent; import mlx_lm; print('OK')" 2>&1
+~/.cache/fastcontext/venv/bin/python -c "from fastcontext.agent.agent_factory import make_fastcontext_agent; import mlx_lm; print('OK')" 2>&1
 ```
 
-If it prints `OK`, skip to **Ensure MLX Server**. If it fails, run the installer:
+If it prints `OK`, skip to **Ensure MLX Server**. If the venv or imports fail, run the installer:
 
 ```bash
 bash "$(dirname "$(find ~/.claude/skills ~/.agents/skills .claude/skills -name 'SKILL.md' -path '*fastcontext*' 2>/dev/null | head -1)")/scripts/install.sh"
 ```
 
-The installer takes 2-5 minutes on first run (downloads the ~2.5 GB model). It installs `fastcontext`, `mlx-lm`, and `mcp`, downloads the model, and runs a smoke test.
+The installer uses `uv` to create a venv at `~/.cache/fastcontext/venv`, installs `fastcontext` and `mlx-lm`, downloads the model (~2.5 GB), and symlinks the `fastcontext` CLI to `~/.local/bin/`. Takes 2-5 minutes on first run.
 
 ## Ensure MLX Server
 

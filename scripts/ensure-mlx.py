@@ -14,6 +14,7 @@ from pathlib import Path
 
 MODEL = os.environ.get("MODEL", "mattrobenolt/FastContext-1.0-4B-SFT-mlx-bf16")
 PORT = int(os.environ.get("PORT", "8080"))
+VENV_PYTHON = Path.home() / ".cache" / "fastcontext" / "venv" / "bin" / "python"
 LOG_DIR = Path.home() / ".cache" / "fastcontext"
 LOG_FILE = LOG_DIR / "mlx-server.log"
 TIMEOUT = 120
@@ -30,9 +31,10 @@ def is_server_ready(port: int) -> bool:
 
 def start_server(model: str, port: int) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
     with open(LOG_FILE, "a") as log:
         subprocess.Popen(
-            [sys.executable, "-m", "mlx_lm.server", "--model", model, "--port", str(port)],
+            [python, "-m", "mlx_lm.server", "--model", model, "--port", str(port)],
             stdout=log,
             stderr=log,
             start_new_session=True,
