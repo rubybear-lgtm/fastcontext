@@ -12,8 +12,11 @@ import re
 import tempfile
 from pathlib import Path
 
+import mlx.core as mx
 from mcp.server.fastmcp import FastMCP, Context as McpContext
-from mlx_lm import load, generate
+from mlx_lm import load
+from mlx_lm.generate import stream_generate
+from mlx_lm.models.cache import make_prompt_cache
 
 from fastcontext.agent.agent import Agent
 from fastcontext.agent.context import Context
@@ -47,10 +50,20 @@ mcp = FastMCP(
 
 
 class MlxLLM:
-    """Drop-in replacement for FastContext's LLM that uses mlx_lm directly."""
+    """Drop-in replacement for FastContext's LLM that uses mlx_lm directly.
+
+    Maintains a KV cache across turns so each turn only prefills new tokens
+    (tool results) instead of re-processing the entire conversation.
+    """
 
     def __init__(self, model_name: str):
         self.model = model_name
+        self._cache = None
+        self._n_cached = 0
+
+    def reset_cache(self):
+        self._cache = make_prompt_cache(_mlx_model)
+        self._n_cached = 0
 
     async def acall(
         self,
@@ -60,23 +73,41 @@ class MlxLLM:
         if isinstance(messages[0], Message):
             messages = [m.to_dict(exclude_none=True) for m in messages]
 
-        prompt = _tokenizer.apply_chat_template(
+        all_tokens = _tokenizer.apply_chat_template(
             messages,
             tools=[t["function"] for t in tools] if tools else None,
             add_generation_prompt=True,
-            tokenize=False,
+            tokenize=True,
         )
 
-        text = await asyncio.to_thread(
-            generate,
-            _mlx_model,
-            _tokenizer,
-            prompt=prompt,
-            max_tokens=4096,
-            verbose=False,
+        if self._cache is None:
+            self.reset_cache()
+
+        new_tokens = all_tokens[self._n_cached:]
+        if len(new_tokens) < 1:
+            self.reset_cache()
+            new_tokens = all_tokens
+
+        text, n_gen = await asyncio.to_thread(
+            self._generate_cached, new_tokens,
         )
 
+        self._n_cached = len(all_tokens) + n_gen
         return self._parse_response(text)
+
+    def _generate_cached(self, tokens: list[int]) -> tuple[str, int]:
+        prompt = mx.array(tokens)
+        text = ""
+        last_response = None
+        for response in stream_generate(
+            _mlx_model, _tokenizer, prompt,
+            max_tokens=2048,
+            prompt_cache=self._cache,
+        ):
+            text += response.text
+            last_response = response
+        n_gen = (last_response.generation_tokens - 1) if last_response else 0
+        return text, n_gen
 
     def _parse_response(self, text: str) -> Message:
         tool_calls = self._extract_tool_calls(text)
