@@ -39,11 +39,13 @@ This script checks if `localhost:8080` is responding. If not, it starts the MLX 
 
 ## Running FastContext
 
-Execute exploration queries using the FastContext CLI:
+Execute exploration queries using the FastContext CLI wrapper at `~/.local/bin/fastcontext`. The wrapper bakes in env var defaults (MODEL, API_KEY, BASE_URL) so no environment setup is needed:
 
 ```bash
-fastcontext --query "QUERY_HERE" --max-turns 4 --citation
+~/.local/bin/fastcontext --query "QUERY_HERE" --max-turns 4 --citation
 ```
+
+If FastContext crashes or the MLX server is unreachable, fall back to normal Read/Grep/Glob tools rather than leaving the task stuck.
 
 ### Parameters
 
