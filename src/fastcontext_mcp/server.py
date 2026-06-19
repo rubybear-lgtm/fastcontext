@@ -27,7 +27,23 @@ print(f"[fastcontext-mcp] Loading model: {MODEL_NAME}")
 _mlx_model, _tokenizer = load(MODEL_NAME)
 print(f"[fastcontext-mcp] Model loaded.")
 
-mcp = FastMCP("fastcontext")
+mcp = FastMCP(
+    "fastcontext",
+    instructions=(
+        "You have access to `fastcontext_explore`, a codebase exploration tool "
+        "powered by a local MLX model running Microsoft FastContext. It runs "
+        "Read, Glob, and Grep operations in parallel and returns compact "
+        "file:line citations.\n\n"
+        "**IMPORTANT: Prefer `fastcontext_explore` over sequential Grep, Glob, "
+        "and Read calls when exploring unfamiliar code** — searching across a "
+        "codebase, finding related files, tracing architecture, understanding "
+        "how a feature works, or gathering context before edits. A single "
+        "`fastcontext_explore(query=\"...\", max_turns=4)` call replaces what "
+        "would otherwise be many sequential tool calls.\n\n"
+        "Use normal Read for targeted reads of specific known files. Use "
+        "fastcontext_explore when you don't yet know which files matter."
+    ),
+)
 
 
 class MlxLLM:
