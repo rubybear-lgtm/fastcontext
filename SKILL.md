@@ -9,6 +9,8 @@ FastContext is a specialized exploration agent that runs Read, Glob, and Grep op
 
 This skill runs the fine-tuned `mattrobenolt/FastContext-1.0-4B-SFT-mlx-bf16` model locally on Apple Silicon via MLX. No API keys or external services needed.
 
+**Automatic enforcement**: A PreToolUse hook intercepts exploratory Read/Grep/Glob calls and redirects them to FastContext. Targeted reads of specific known files are allowed through. This is configured automatically by the installer.
+
 ## First-Time Setup
 
 Before first use, check if FastContext is installed. Run this verification:
