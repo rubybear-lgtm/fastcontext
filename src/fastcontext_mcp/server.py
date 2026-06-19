@@ -24,7 +24,7 @@ from fastcontext.agent.llm import Message, FunctionCall, RequestyAPIError
 from fastcontext.agent.tool.tool import ToolSet
 from fastcontext.agent.utils import load_system_prompt, get_final_answer
 
-MODEL_NAME = "mattrobenolt/FastContext-1.0-4B-SFT-mlx-bf16"
+MODEL_NAME = "mattrobenolt/FastContext-1.0-4B-SFT-mlx-4bit"
 
 print(f"[fastcontext-mcp] Loading model: {MODEL_NAME}")
 _mlx_model, _tokenizer = load(MODEL_NAME)
