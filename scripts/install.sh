@@ -15,12 +15,15 @@ SKILLS_RAW_BASE="https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/mai
 TARGET="auto"
 INSTALL_SKILLS=false
 FROM_SOURCE=false
+ACTION="install"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target) TARGET="$2"; shift 2 ;;
         --target=*) TARGET="${1#*=}"; shift ;;
         --install-skills) INSTALL_SKILLS=true; shift ;;
         --from-source) FROM_SOURCE=true; shift ;;
+        --update) ACTION="update"; shift ;;
+        --uninstall) ACTION="uninstall"; shift ;;
         --help|-h)
             cat <<'EOF'
 fastcontext-mcp installer
@@ -36,6 +39,8 @@ Options:
                      and symlink them into detected tool skill directories.
   --from-source      Build from git source instead of using a prebuilt wheel.
                      Slower, but useful for development or if no release exists.
+  --update           Re-install the latest version (keeps config registrations).
+  --uninstall        Remove the venv, MCP config entries, and skill files.
   --help, -h         Show this help message
 
 By default, the installer downloads a prebuilt wheel from the latest
@@ -48,13 +53,75 @@ Examples:
   install.sh --target both --install-skills     # all tools + skill files
   install.sh --from-source                      # build from git
   install.sh --install-skills                   # auto-detect + skill files
+  install.sh --update                           # update to latest version
+  install.sh --uninstall                        # remove everything
 EOF
             exit 0 ;;
         *) echo "Unknown flag: $1 (use --help for usage)"; exit 1 ;;
     esac
 done
 
-echo "=== fastcontext-mcp installer ==="
+# -------------------------------------------------------------------
+# Uninstall: remove venv, MCP config entries, and skill files
+# -------------------------------------------------------------------
+if [ "$ACTION" = "uninstall" ]; then
+    echo "=== fastcontext-mcp uninstaller ==="
+    PYTHON="$VENV_DIR/bin/python"
+
+    # Remove MCP config entries (needs the package still installed)
+    if [ -x "$PYTHON" ] && "$PYTHON" -c "import fastcontext_mcp.configwriter" 2>/dev/null; then
+        echo "[1/3] Removing MCP config entries..."
+        "$PYTHON" -c "
+from fastcontext_mcp.configwriter import TOOL_CONFIGS, remove_mcp_config, uninstall_skill_files
+
+for tool in TOOL_CONFIGS:
+    removed = remove_mcp_config(tool)
+    cfg = TOOL_CONFIGS[tool]
+    if removed:
+        print(f'      Removed fastcontext from ~/{cfg[\"path\"]}')
+
+print('[2/3] Removing skill files...')
+removed = uninstall_skill_files()
+for p in removed:
+    print(f'      Removed {p}')
+if not removed:
+    print('      No skill files found.')
+"
+    else
+        echo "[1/3] Package not installed, skipping config cleanup."
+        echo "[2/3] Skipping skill file cleanup."
+    fi
+
+    echo "[3/3] Removing venv..."
+    if [ -d "$VENV_DIR" ]; then
+        rm -rf "$VENV_DIR"
+        echo "      Removed $VENV_DIR"
+    else
+        echo "      Venv not found at $VENV_DIR"
+    fi
+
+    echo ""
+    echo "=== Uninstall complete ==="
+    echo "Restart your AI coding tool to finish removal."
+    exit 0
+fi
+
+# -------------------------------------------------------------------
+# Update: remove old venv and re-install (config entries are preserved)
+# -------------------------------------------------------------------
+if [ "$ACTION" = "update" ]; then
+    echo "=== fastcontext-mcp updater ==="
+    if [ -d "$VENV_DIR" ]; then
+        echo "Removing old installation..."
+        rm -rf "$VENV_DIR"
+    fi
+    echo "Re-installing..."
+    # Fall through to the normal install flow
+fi
+
+if [ "$ACTION" = "install" ] || [ "$ACTION" = "update" ]; then
+    echo "=== fastcontext-mcp installer ==="
+fi
 
 # -------------------------------------------------------------------
 # 1. Ensure uv

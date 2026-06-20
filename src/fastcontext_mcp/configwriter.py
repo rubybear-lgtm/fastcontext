@@ -118,6 +118,73 @@ def write_mcp_config(
     raise ValueError(f"Unknown format: {cfg['format']!r}")
 
 
+def remove_mcp_config(
+    tool: ToolName,
+    *,
+    home: Optional[Path] = None,
+) -> bool:
+    """Remove the fastcontext MCP entry from ``tool``'s config file.
+
+    Returns True if the entry was removed, False if it wasn't present.
+    """
+    if tool not in TOOL_CONFIGS:
+        raise ValueError(f"Unknown tool: {tool!r}")
+
+    home = home or Path.home()
+    cfg = TOOL_CONFIGS[tool]
+    path = _config_path(tool, home)
+    entry_name = cfg["entry_name"]
+    container_key = cfg["container_key"]
+
+    if not path.exists():
+        return False
+
+    if cfg["format"] == "json":
+        content = path.read_text().strip()
+        config = json.loads(content) if content else {}
+        if container_key not in config or entry_name not in config[container_key]:
+            return False
+        del config[container_key][entry_name]
+        path.write_text(json.dumps(config, indent=2) + "\n")
+        return True
+
+    if cfg["format"] == "toml":
+        config = tomllib.loads(path.read_text())
+        if container_key not in config or entry_name not in config[container_key]:
+            return False
+        del config[container_key][entry_name]
+        if tomli_w is None:
+            raise ValueError("tomli_w is required to write TOML config for codex")
+        path.write_text(tomli_w.dumps(config))
+        return True
+
+    return False
+
+
+def uninstall_skill_files(*, home: Optional[Path] = None) -> list[Path]:
+    """Remove all FastContext skill files and symlinks.
+
+    Returns a list of paths that were removed.
+    """
+    home = home or Path.home()
+    removed: list[Path] = []
+
+    for skill_name in SKILL_NAMES:
+        for _tool, rel_path in _SKILL_LINK_DIRS.items():
+            link = home / rel_path / skill_name
+            if link.is_symlink() or link.exists():
+                link.unlink()
+                removed.append(link)
+
+        skill_dir = home / ".agents" / "skills" / skill_name
+        if skill_dir.exists():
+            import shutil
+            shutil.rmtree(skill_dir)
+            removed.append(skill_dir)
+
+    return removed
+
+
 def detect_installed_tools(*, home: Optional[Path] = None) -> list[str]:
     """Return the list of agent tools that appear to be installed.
 

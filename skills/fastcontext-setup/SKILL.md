@@ -109,6 +109,18 @@ To force building from git source instead of the prebuilt wheel, add `--from-sou
 curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --from-source
 ```
 
+To update to the latest version (re-installs the package, keeps config registrations):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --update
+```
+
+To uninstall (removes the venv, MCP config entries, and skill files):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --uninstall
+```
+
 The script is idempotent and safe to re-run. It prints a `=== Done ===` block at the end listing which config files were written.
 
 If the script fails, capture the output and report the failing step to the user. Common failures:
