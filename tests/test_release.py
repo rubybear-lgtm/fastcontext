@@ -136,19 +136,26 @@ class TestResolveWheelUrl:
 # --- download_wheel ------------------------------------------------------
 
 class TestDownloadWheel:
-    @patch("fastcontext_mcp.release.urllib.request.urlretrieve")
-    def test_downloads_to_dest(self, mock_retrieve: MagicMock):
-        result = download_wheel("https://x/whl", "/tmp/out.whl")
-        assert result == "/tmp/out.whl"
-        mock_retrieve.assert_called_once_with("https://x/whl", "/tmp/out.whl")
+    @patch("fastcontext_mcp.release.urllib.request.urlopen")
+    def test_downloads_to_dest(self, mock_urlopen: MagicMock, tmp_path):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"wheel-bytes"
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        dest = str(tmp_path / "out.whl")
+        result = download_wheel("https://x/whl", dest)
+        assert result == dest
+        mock_urlopen.assert_called_once()
+        with open(dest, "rb") as f:
+            assert f.read() == b"wheel-bytes"
 
     @patch(
-        "fastcontext_mcp.release.urllib.request.urlretrieve",
+        "fastcontext_mcp.release.urllib.request.urlopen",
         side_effect=Exception("network error"),
     )
-    def test_failure_raises_release_error(self, mock_retrieve: MagicMock):
+    def test_failure_raises_release_error(self, mock_urlopen: MagicMock, tmp_path):
         with pytest.raises(ReleaseError, match="Failed to download wheel"):
-            download_wheel("https://x/whl", "/tmp/out.whl")
+            download_wheel("https://x/whl", str(tmp_path / "out.whl"))
 
 
 # --- Integration: full resolve flow --------------------------------------

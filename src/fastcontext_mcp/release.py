@@ -95,7 +95,13 @@ def download_wheel(url: str, dest_path: str, *, timeout: float = 120) -> str:
     Returns the destination path. Raises ReleaseError on failure.
     """
     try:
-        urllib.request.urlretrieve(url, dest_path)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "fastcontext-mcp-installer",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+        with open(dest_path, "wb") as f:
+            f.write(data)
     except Exception as e:
         raise ReleaseError(f"Failed to download wheel from {url}: {e}") from e
     return dest_path

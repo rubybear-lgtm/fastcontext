@@ -80,29 +80,49 @@ if [ "$FROM_SOURCE" = true ]; then
     INSTALL_SOURCE="$REPO_URL"
     echo "      --from-source: building from git"
 else
-    # Try prebuilt wheel first; fall back to git source on failure
-    WHEEL_INFO=$("$PYTHON" -c "
-from fastcontext_mcp.release import resolve_wheel_url, ReleaseError
+    # Try prebuilt wheel first; fall back to git source on failure.
+    # NOTE: This runs BEFORE the package is installed, so we use only
+    # stdlib (no import from fastcontext_mcp) — the release module is
+    # available after install for programmatic use, but the bootstrap
+    # must be self-contained.
+    WHEEL_URL=$("$PYTHON" -c "
+import json, re, urllib.request, sys
+API = 'https://api.github.com/repos/rubybear-lgtm/fastcontext/releases'
+WHEEL_RE = re.compile(r'fastcontext_mcp-[\w.]+-py3-none-any\.whl$')
+def get(url):
+    req = urllib.request.Request(url, headers={
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'fastcontext-mcp-installer',
+    })
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode('utf-8'))
 try:
-    result = resolve_wheel_url(timeout=15)
-    if result:
-        print(result[0])
-    else:
-        print('NONE')
-except ReleaseError:
-    print('NONE')
+    release = get(API + '/latest')
 except Exception:
-    print('NONE')
+    try:
+        releases = get(API)
+        release = releases[0] if releases else {}
+    except Exception:
+        release = {}
+for asset in release.get('assets', []):
+    if WHEEL_RE.search(asset.get('name', '')):
+        url = asset.get('browser_download_url')
+        if url:
+            print(url)
+            sys.exit(0)
+print('NONE')
 " 2>/dev/null || echo "NONE")
 
-    if [ "$WHEEL_INFO" != "NONE" ] && [ -n "$WHEEL_INFO" ]; then
+    if [ "$WHEEL_URL" != "NONE" ] && [ -n "$WHEEL_URL" ]; then
         echo "      Found prebuilt wheel, downloading..."
-        WHEEL_PATH=$(mktemp -t fastcontext_XXXXXX --suffix=.whl)
+        # mktemp -d + filename is portable (macOS BSD mktemp doesn't
+        # support --suffix)
+        WHEEL_DIR=$(mktemp -d)
+        WHEEL_PATH="$WHEEL_DIR/fastcontext_mcp.whl"
         if "$PYTHON" -c "
-import sys
-from fastcontext_mcp.release import download_wheel
+import sys, urllib.request
 try:
-    download_wheel('$WHEEL_INFO', '$WHEEL_PATH', timeout=120)
+    urllib.request.urlretrieve('$WHEEL_URL', '$WHEEL_PATH')
     print('OK')
 except Exception as e:
     print(f'FAIL: {e}', file=sys.stderr)
@@ -112,7 +132,7 @@ except Exception as e:
             echo "      Downloaded prebuilt wheel"
         else
             echo "      Wheel download failed, falling back to git source"
-            rm -f "$WHEEL_PATH"
+            rm -rf "$WHEEL_DIR"
             INSTALL_SOURCE="$REPO_URL"
         fi
     else
@@ -126,7 +146,7 @@ echo "      Installed into $VENV_DIR"
 
 # Clean up downloaded wheel (uv pip install copies it into the venv)
 if [[ "$INSTALL_SOURCE" == *.whl ]] && [ -f "$INSTALL_SOURCE" ]; then
-    rm -f "$INSTALL_SOURCE"
+    rm -rf "$(dirname "$INSTALL_SOURCE")"
 fi
 
 # -------------------------------------------------------------------
@@ -165,6 +185,13 @@ echo "      Tools to register: ${REGISTER_TOOLS[*]:-(none)}"
 # 4. Register MCP servers (and optionally install skill files)
 # -------------------------------------------------------------------
 echo "[4/5] Registering MCP server(s)..."
+
+# Verify the package installed successfully before using its modules
+if ! "$PYTHON" -c "import fastcontext_mcp.configwriter" 2>/dev/null; then
+    echo "      ERROR: fastcontext-mcp package not installed correctly."
+    echo "      The uv pip install in step 2 may have failed. Re-run the installer."
+    exit 1
+fi
 
 export VENV_DIR
 export REGISTER_TOOLS_STR="${REGISTER_TOOLS[*]}"

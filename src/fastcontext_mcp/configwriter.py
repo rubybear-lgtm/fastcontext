@@ -49,6 +49,8 @@ SKILL_NAMES = ("fastcontext", "fastcontext-setup")
 _SKILL_LINK_DIRS: dict[str, str] = {
     "claude": ".claude/skills",
     "opencode": ".config/opencode/skills",
+    # Note: Codex CLI does not have a skill directory system — it loads
+    # skills from the MCP server's instructions, so no symlink is needed.
 }
 
 

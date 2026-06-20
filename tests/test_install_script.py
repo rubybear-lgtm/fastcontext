@@ -163,14 +163,33 @@ class TestScriptContent:
 
     def test_uses_release_module_for_wheel(self, script_path: Path):
         content = script_path.read_text()
-        assert "fastcontext_mcp.release" in content
-        assert "resolve_wheel_url" in content
-        assert "download_wheel" in content
+        # The bootstrap wheel resolution is inlined using stdlib only
+        # (no import from fastcontext_mcp) so it works on first install.
+        # The release module is used for programmatic use after install.
+        assert "api.github.com/repos/rubybear-lgtm/fastcontext/releases" in content
+        assert "fastcontext_mcp" in content  # wheel name pattern
+        assert "WHEEL_RE" in content or "py3-none-any" in content
 
     def test_has_prebuilt_fallback_to_git(self, script_path: Path):
         content = script_path.read_text()
         assert "REPO_URL" in content
         assert "falling back to git" in content or "building from git" in content
+
+    def test_wheel_resolution_is_stdlib_only(self, script_path: Path):
+        """The bootstrap must not import from fastcontext_mcp (not installed yet)."""
+        content = script_path.read_text()
+        # Find the wheel resolution Python block
+        assert "import json, re, urllib.request, sys" in content
+        # Must NOT import fastcontext_mcp.release in the bootstrap phase
+        # (it's fine to use it after install in step 4)
+        bootstrap_section = content.split("uv pip install")[0]
+        assert "from fastcontext_mcp.release" not in bootstrap_section
+
+    def test_uses_portable_mktemp(self, script_path: Path):
+        """mktemp must not use --suffix (not supported on macOS BSD mktemp)."""
+        content = script_path.read_text()
+        assert "mktemp --suffix" not in content
+        assert "mktemp -d" in content
 
     def test_has_all_five_steps(self, script_path: Path):
         content = script_path.read_text()
