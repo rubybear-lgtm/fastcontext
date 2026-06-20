@@ -12,23 +12,23 @@ import tempfile
 from pathlib import Path
 
 import mlx.core as mx
-from mcp.server.fastmcp import FastMCP, Context as McpContext
+from fastcontext.agent.agent import Agent
+from fastcontext.agent.llm import Message, RequestyAPIError
+from fastcontext.agent.tool.tool import ToolSet
+from fastcontext.agent.utils import get_final_answer, load_system_prompt
+from mcp.server.fastmcp import Context as McpContext
+from mcp.server.fastmcp import FastMCP
 from mlx_lm import load
 from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import make_prompt_cache
 
-from fastcontext.agent.agent import Agent
-from fastcontext.agent.context import Context
-from fastcontext.agent.llm import Message, RequestyAPIError
-from fastcontext.agent.tool.tool import ToolSet
-from fastcontext.agent.utils import load_system_prompt, get_final_answer
 from fastcontext_mcp._shared import parse_response
 
 MODEL_NAME = "rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32"
 
 print(f"[fastcontext-mcp] Loading model: {MODEL_NAME}")
 _mlx_model, _tokenizer = load(MODEL_NAME)
-print(f"[fastcontext-mcp] Model loaded.")
+print("[fastcontext-mcp] Model loaded.")
 
 mcp = FastMCP(
     "fastcontext",

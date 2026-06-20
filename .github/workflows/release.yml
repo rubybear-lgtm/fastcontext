@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.1.0) — leave empty to use pyproject.toml"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Build wheel
+        run: |
+          uv build --wheel
+          echo "Built wheel:"
+          ls -la dist/*.whl
+
+      - name: Verify wheel metadata
+        run: |
+          uv run python -c "
+          import zipfile, sys
+          from pathlib import Path
+          wheels = list(Path('dist').glob('*.whl'))
+          if not wheels:
+              print('ERROR: no wheel found', file=sys.stderr)
+              sys.exit(1)
+          whl = wheels[0]
+          print(f'Wheel: {whl.name} ({whl.stat().st_size} bytes)')
+          with zipfile.ZipFile(whl) as z:
+              names = z.namelist()
+              required = [
+                  'fastcontext_mcp/__init__.py',
+                  'fastcontext_mcp/server.py',
+                  'fastcontext_mcp/_shared.py',
+                  'fastcontext_mcp/configwriter.py',
+                  'fastcontext_mcp/release.py',
+              ]
+              for req in required:
+                  assert req in names, f'Missing in wheel: {req}'
+              print('All required modules present in wheel')
+          "
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version: $TAG"
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*.whl
+          fail_on_unmatched_files: true

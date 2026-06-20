@@ -1,4 +1,15 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .DS_Store
 .fastcontext/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# venvs
+.venv/
+venv/
