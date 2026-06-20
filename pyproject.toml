@@ -1,6 +1,6 @@
 [project]
 name = "fastcontext-mcp"
-version = "0.1.0"
+version = "0.0.1"
 description = "MCP server wrapping Microsoft FastContext with in-process MLX inference"
 readme = "README.md"
 requires-python = ">=3.12"
