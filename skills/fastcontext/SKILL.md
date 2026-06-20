@@ -7,6 +7,36 @@ description: This skill should be used when the user asks to "explore the codeba
 
 FastContext is a specialized exploration agent that runs Read, Glob, and Grep operations in parallel using a local 4B model via MLX, returning compact file-path:line-range citations. The model runs in-process — no external server, no env vars.
 
+## How it works
+
+FastContext is a two-part system. You are currently reading the **skill** (instructions); the actual work is done by the **MCP server** (a Python process running the model).
+
+```
+User: "find all auth middleware"
+  │
+  ▼
+Agent reads this SKILL.md  ──▶  decides: use fastcontext_explore
+  │
+  ▼
+Agent calls fastcontext_explore(query="...", max_turns=4)
+  │  (MCP call over stdio)
+  ▼
+fastcontext-mcp process
+  ├─ loads FastContext-1.0-4B-mlx-4bit model
+  ├─ agent loop: Read / Glob / Grep in parallel
+  └─ returns file:line citations
+  │
+  ▼
+Agent receives citations, can Read the specific lines
+```
+
+| Part | File | Role |
+|------|------|------|
+| Skill (this file) | `SKILL.md` | Tells the agent *when* and *how* to call the tool |
+| MCP server | `fastcontext-mcp` binary | Runs the model, exposes `fastcontext_explore` as an MCP tool |
+
+If `fastcontext_explore` is not in your tool list, the MCP server isn't installed. See the `fastcontext-setup` skill to install it.
+
 ## Prerequisite
 
 The `fastcontext` MCP server must be registered. If the `fastcontext_explore` tool is not available, run the setup skill first — `fastcontext-setup`.

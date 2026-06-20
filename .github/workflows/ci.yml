@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Build wheel (verify it builds)
+        run: uv build --wheel
+
+      - name: Verify wheel contents
+        run: |
+          uv run python -c "
+          import zipfile, sys
+          from pathlib import Path
+          wheels = list(Path('dist').glob('*.whl'))
+          if not wheels:
+              print('ERROR: no wheel found', file=sys.stderr)
+              sys.exit(1)
+          whl = wheels[0]
+          with zipfile.ZipFile(whl) as z:
+              names = z.namelist()
+              for req in ['fastcontext_mcp/__init__.py', 'fastcontext_mcp/server.py', 'fastcontext_mcp/_shared.py', 'fastcontext_mcp/configwriter.py', 'fastcontext_mcp/release.py']:
+                  assert req in names, f'Missing in wheel: {req}'
+          print(f'Wheel OK: {whl.name}')
+          "
+
+      - name: Install test dependencies
+        run: |
+          # Install only the light deps needed by configwriter/release modules
+          # (tomli_w) plus pytest. The heavy mlx-lm / fastcontext git deps
+          # require Apple Silicon and are not needed for the test suite.
+          uv pip install --system pytest tomli-w
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: pytest tests/ -v
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          ignore_paths: benchmark
