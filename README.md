@@ -15,7 +15,7 @@ Loads the fine-tuned `rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32` model direct
 
 ```bash
 # 1. Install the setup skill
-npx add skill fastcontext-setup
+npx skills add rubybear-lgtm/fastcontext@fastcontext-setup -g -y
 
 # 2. In your AI coding tool (Claude Code, OpenCode, or Codex CLI), say:
 #    "Install FastContext"
@@ -134,7 +134,7 @@ Both are needed: the MCP server provides the tool, the skill tells the agent to 
 Install the setup skill, then let your agent handle the rest:
 
 ```bash
-npx add skill fastcontext-setup
+npx skills add rubybear-lgtm/fastcontext@fastcontext-setup -g -y
 ```
 
 Then in your AI coding tool, say **"Install FastContext"**. The agent will:

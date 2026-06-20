@@ -16,7 +16,7 @@ FastContext has two components that must both be present:
 | **MCP server** | A Python program (`fastcontext-mcp`) running the `FastContext-1.0-4B` model via MLX | Provides the `fastcontext_explore` tool — the actual engine |
 | **Skill** (this file) | Instructions the AI agent loads | Tells the agent *when* and *how* to use `fastcontext_explore` |
 
-The skill is easy to install (`npx add skill fastcontext-setup`) — it's just a Markdown file. The MCP server is harder: it requires a Python venv, a model download, and registration in your agent tool's config file. **This skill exists to bridge that gap** — it lets the agent install the MCP server for the user instead of requiring the user to do it manually.
+The skill is easy to install (`npx skills add rubybear-lgtm/fastcontext@fastcontext-setup -g -y`) — it's just a Markdown file. The MCP server is harder: it requires a Python venv, a model download, and registration in your agent tool's config file. **This skill exists to bridge that gap** — it lets the agent install the MCP server for the user instead of requiring the user to do it manually.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

@@ -226,7 +226,7 @@ class TestReadmeConsistency:
         assert "## Install" in readme_content or "# Install" in readme_content
 
     def test_mentions_npx_add_skill(self, readme_content: str):
-        assert "npx add skill" in readme_content
+        assert "npx skills add" in readme_content
 
     def test_mentions_curl_install(self, readme_content: str):
         assert "curl" in readme_content
