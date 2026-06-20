@@ -1,6 +1,6 @@
 ---
 name: fastcontext-setup
-description: This skill should be used when the user asks to "install FastContext", "set up FastContext", "configure FastContext MCP", "add FastContext", or mentions needing to install or configure the FastContext exploration agent. Installs the MCP server, registers it with the user's AI coding tool, and verifies the setup.
+description: This skill should be used when the user asks to "install FastContext", "set up FastContext", "configure FastContext MCP", "add FastContext", "update FastContext", "upgrade FastContext", "uninstall FastContext", "remove FastContext", or mentions needing to install, update, or remove the FastContext exploration agent. Handles install, update, and uninstall of the MCP server and skill files.
 ---
 
 # FastContext Setup
@@ -164,6 +164,42 @@ Report to the user:
 Then tell them the final manual step:
 
 > **Restart your AI coding tool now** for the `fastcontext_explore` MCP tool to become available. After restart, you can ask me to explore the codebase and I'll use FastContext automatically.
+
+## Update procedure (agent-executed)
+
+When the user asks to "update FastContext", "upgrade FastContext", or "get the latest FastContext":
+
+### Step 1: Run the update
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --update
+```
+
+This removes the old venv and re-installs from the latest release. Existing MCP config registrations are preserved.
+
+### Step 2: Verify and report
+
+Run the verification command from Step 5 of the install procedure above. Tell the user to restart their AI coding tool.
+
+## Uninstall procedure (agent-executed)
+
+When the user asks to "uninstall FastContext", "remove FastContext", or "delete FastContext":
+
+### Step 1: Confirm with the user
+
+Tell the user:
+
+> "This will remove the FastContext venv (`~/.cache/fastcontext/venv`), MCP config entries from all detected tools, and any installed skill files. Shall I proceed?"
+
+### Step 2: Run the uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --uninstall
+```
+
+### Step 3: Report
+
+Tell the user what was removed and instruct them to restart their AI coding tool to complete removal.
 
 ## Manual installation (fallback)
 
