@@ -9,7 +9,7 @@ FastContext is a specialized exploration agent that runs Read, Glob, and Grep op
 
 ## Prerequisite
 
-The `fastcontext` MCP server must be registered in Claude Code. If the `fastcontext_explore` tool is not available, run the setup skill first — see `skills/setup/SKILL.md`.
+The `fastcontext` MCP server must be registered. If the `fastcontext_explore` tool is not available, run the setup skill first — `fastcontext-setup`.
 
 ## Usage
 
