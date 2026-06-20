@@ -71,13 +71,48 @@ fastcontext_explore(query="Find all authentication middleware and session handli
 - **Simple keyword search**: A single Grep suffices
 - **Subagents without MCP access**: Some subagent types may not have the `fastcontext_explore` tool available. In that case, run the exploration from the main conversation first.
 
+## Writing Effective Queries
+
+The exploration model is a 4B parameter model — capable but sensitive to query specificity. Vague queries produce hallucinated or irrelevant citations. Specific queries produce accurate results.
+
+### Anchor queries with concrete names
+
+Always include at least one of: a class name, function name, filename pattern, error message, import path, or language.
+
+| Instead of | Write |
+|-----------|-------|
+| "Find the main entry point" | "Find the Python file that defines the `main()` function or `console_scripts` entry point" |
+| "How does auth work?" | "Find the authentication middleware classes and JWT validation logic" |
+| "Find the config" | "Find `.yaml` or `.toml` config files and the Python module that loads them" |
+
+### Mention the language or file type when known
+
+The model searches with Glob and Grep. Mentioning `*.py`, `*.ts`, `TypeScript`, or `Go` helps it target the right files instead of guessing.
+
+### Prefer multiple specific calls over one broad call
+
+Split broad explorations into focused queries. Two calls at `max_turns=3` each are faster and more accurate than one call at `max_turns=6`.
+
+```
+# Instead of one broad call:
+fastcontext_explore(query="Understand the entire project architecture", max_turns=6)
+
+# Run two focused calls:
+fastcontext_explore(query="Find Python entry points, CLI commands, and MCP server registration", max_turns=3)
+fastcontext_explore(query="Find the LLM inference class and model loading code", max_turns=3)
+```
+
+### Verify citations before acting on them
+
+The model may cite files that do not exist, especially on vague queries. Always Read a cited file before editing it. If a citation path looks wrong (unexpected language, framework, or directory), re-query with more specific terms.
+
 ## Query Examples
 
 ```
 "Find all database migration files and the schema definition for the users table"
 "Locate the API route handlers for /api/v2/users and their request validation"
 "Find error handling patterns: custom error classes, error middleware, and error logging"
-"Locate the CLI entry point and trace the command registration pattern"
+"Find the TypeScript React components that render the settings page and their prop types"
 ```
 
 ## Interpreting Results
