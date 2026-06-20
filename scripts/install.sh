@@ -116,13 +116,21 @@ print('NONE')
     if [ "$WHEEL_URL" != "NONE" ] && [ -n "$WHEEL_URL" ]; then
         echo "      Found prebuilt wheel, downloading..."
         # mktemp -d + filename is portable (macOS BSD mktemp doesn't
-        # support --suffix)
+        # support --suffix). Preserve the original wheel filename from
+        # the URL — uv pip install requires the version in the filename.
         WHEEL_DIR=$(mktemp -d)
-        WHEEL_PATH="$WHEEL_DIR/fastcontext_mcp.whl"
+        WHEEL_FILENAME=$(basename "$WHEEL_URL")
+        WHEEL_PATH="$WHEEL_DIR/$WHEEL_FILENAME"
         if "$PYTHON" -c "
 import sys, urllib.request
 try:
-    urllib.request.urlretrieve('$WHEEL_URL', '$WHEEL_PATH')
+    req = urllib.request.Request('$WHEEL_URL', headers={
+        'User-Agent': 'fastcontext-mcp-installer',
+    })
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = r.read()
+    with open('$WHEEL_PATH', 'wb') as f:
+        f.write(data)
     print('OK')
 except Exception as e:
     print(f'FAIL: {e}', file=sys.stderr)
