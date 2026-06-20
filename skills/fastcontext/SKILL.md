@@ -32,12 +32,14 @@ fastcontext_explore(query="Find all authentication middleware and session handli
 - **Cross-cutting concerns**: Finding all files related to a feature
 - **Architecture discovery**: Understanding module connections
 - **Dependency tracing**: Finding callers or implementors of a function
+- **Before spawning exploration subagents**: A single `fastcontext_explore` call can replace many subagent Read/Glob operations. Run it first, then pass the resulting citations to subagents for targeted deep-reading — this saves tokens and wall-clock time.
 
 ### When NOT to use
 
 - **Already-explored files**: Context is in the conversation
 - **Single known file**: Direct Read is faster
 - **Simple keyword search**: A single Grep suffices
+- **Subagents without MCP access**: Some subagent types may not have the `fastcontext_explore` tool available. In that case, run the exploration from the main conversation first.
 
 ## Query Examples
 

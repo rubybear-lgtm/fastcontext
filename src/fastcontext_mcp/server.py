@@ -8,7 +8,6 @@ the same process as the MCP server.
 import asyncio
 import json
 import os
-import re
 import tempfile
 from pathlib import Path
 
@@ -20,9 +19,10 @@ from mlx_lm.models.cache import make_prompt_cache
 
 from fastcontext.agent.agent import Agent
 from fastcontext.agent.context import Context
-from fastcontext.agent.llm import Message, FunctionCall, RequestyAPIError
+from fastcontext.agent.llm import Message, RequestyAPIError
 from fastcontext.agent.tool.tool import ToolSet
 from fastcontext.agent.utils import load_system_prompt, get_final_answer
+from fastcontext_mcp._shared import parse_response
 
 MODEL_NAME = "rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32"
 
@@ -110,40 +110,7 @@ class MlxLLM:
         return text, n_gen
 
     def _parse_response(self, text: str) -> Message:
-        tool_calls = self._extract_tool_calls(text)
-        if tool_calls:
-            content_before = text[:text.find("<tool_call>")].strip() or None
-            return Message(
-                role="assistant",
-                content=content_before,
-                tool_calls=tool_calls,
-                tool_call_id=tool_calls[0].id,
-                model=self.model,
-                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            )
-        return Message(
-            role="assistant",
-            content=text.strip(),
-            model=self.model,
-            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        )
-
-    def _extract_tool_calls(self, text: str) -> list[FunctionCall]:
-        calls = []
-        for i, match in enumerate(re.finditer(r"<tool_call>\s*(.*?)\s*</tool_call>", text, re.DOTALL)):
-            try:
-                data = json.loads(match.group(1))
-                name = data.get("name", "")
-                args = data.get("arguments", {})
-                call_id = f"call_{i}"
-                calls.append(FunctionCall(
-                    id=call_id,
-                    name=name,
-                    arguments=json.dumps(args) if isinstance(args, dict) else str(args),
-                ))
-            except (json.JSONDecodeError, KeyError):
-                continue
-        return calls
+        return parse_response(text, self.model)
 
 
 def _make_agent(work_dir: str, traj_path: str) -> Agent:

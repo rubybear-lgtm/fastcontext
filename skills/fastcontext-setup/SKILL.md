@@ -31,7 +31,10 @@ curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scri
 # OpenCode only
 curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --target opencode
 
-# Both
+# Codex CLI only
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --target codex
+
+# All detected tools (default)
 curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --target both
 ```
 
@@ -80,10 +83,18 @@ Then register the MCP server manually:
 }
 ```
 
+**Codex CLI** — add to `~/.codex/config.toml`:
+```toml
+[mcp_servers.fastcontext]
+command = "~/.cache/fastcontext/venv/bin/fastcontext-mcp"
+args = []
+```
+
 ## Verification
 
 - **Claude Code**: Run `/mcp` to confirm the `fastcontext` server appears in the list.
 - **OpenCode**: Check that `fastcontext` appears in the MCP servers list (use `/mcp` or the equivalent status command).
+- **Codex CLI**: Run `codex mcp list` to verify `fastcontext` is connected.
 
 You can also verify directly:
 ```bash
@@ -97,4 +108,5 @@ You can also verify directly:
 - **MCP not showing**: Verify the config was written correctly and restart your tool.
   - Claude Code: check `mcpServers.fastcontext` in `~/.mcp.json`
   - OpenCode: check `mcp.fastcontext` in `~/.config/opencode/opencode.json`
+  - Codex CLI: check `[mcp_servers.fastcontext]` in `~/.codex/config.toml`
 - **Wrong tool registered**: Re-run with `--target` to specify which tool(s) to configure.

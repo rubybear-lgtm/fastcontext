@@ -25,14 +25,13 @@ def run(model_path: str, work_dir: str, query: str, max_turns: int, traj_path: s
 
     from fastcontext.agent.agent import Agent
     from fastcontext.agent.context import Context
-    from fastcontext.agent.llm import Message, FunctionCall, RequestyAPIError
+    from fastcontext.agent.llm import Message, RequestyAPIError
     from fastcontext.agent.tool.tool import ToolSet
     from fastcontext.agent.tool.glob import GlobTool
     from fastcontext.agent.tool.grep import GrepTool
     from fastcontext.agent.tool.read import ReadTool
     from fastcontext.agent.utils import load_system_prompt, get_final_answer
-
-    import re
+    from fastcontext_mcp._shared import parse_response
 
     rg_path = shutil.which("rg") or "/usr/bin/rg"
     GrepTool._rg_path = rg_path
@@ -109,39 +108,7 @@ def run(model_path: str, work_dir: str, query: str, max_turns: int, traj_path: s
             return self._parse_response(text)
 
         def _parse_response(self, text):
-            tool_calls = self._extract_tool_calls(text)
-            if tool_calls:
-                content_before = text[:text.find("<tool_call>")].strip() or None
-                return Message(
-                    role="assistant",
-                    content=content_before,
-                    tool_calls=tool_calls,
-                    tool_call_id=tool_calls[0].id,
-                    model=self.model,
-                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                )
-            return Message(
-                role="assistant",
-                content=text.strip(),
-                model=self.model,
-                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            )
-
-        def _extract_tool_calls(self, text):
-            calls = []
-            for i, match in enumerate(re.finditer(r"<tool_call>\s*(.*?)\s*</tool_call>", text, re.DOTALL)):
-                try:
-                    data = json.loads(match.group(1))
-                    name = data.get("name", "")
-                    args = data.get("arguments", {})
-                    calls.append(FunctionCall(
-                        id=f"call_{i}",
-                        name=name,
-                        arguments=json.dumps(args) if isinstance(args, dict) else str(args),
-                    ))
-                except (json.JSONDecodeError, KeyError):
-                    continue
-            return calls
+            return parse_response(text, self.model)
 
     llm = BenchLLM()
     system_prompt = load_system_prompt(work_dir)

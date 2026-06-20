@@ -8,6 +8,7 @@ dependencies = [
     "mcp>=1.0.0",
     "mlx-lm",
     "fastcontext @ git+https://github.com/microsoft/fastcontext.git",
+    "tomli-w>=1.2.0",
 ]
 
 [project.scripts]
