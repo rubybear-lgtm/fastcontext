@@ -8,14 +8,16 @@ from pathlib import Path
 
 import mlx.core as mx
 from fastcontext.agent.agent import Agent
-from fastcontext.agent.llm import Message, RequestyAPIError
-from fastcontext.agent.tool.tool import ToolSet
-from fastcontext.agent.utils import get_final_answer, load_system_prompt
+from fastcontext.agent.llm import Message
+from fastcontext.agent.utils import load_system_prompt
 from mlx_lm import load
 from mlx_lm.generate import stream_generate
 from mlx_lm.models.cache import make_prompt_cache
 
 from fastcontext_mcp._shared import parse_response
+from fastcontext_mcp.engine import report as _report
+from fastcontext_mcp.engine import run_agent
+from fastcontext_mcp.sources import SourceTools, find_ripgrep
 
 MODEL_NAME = "rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32"
 
@@ -33,10 +35,12 @@ class MlxLLM:
         self.model = model_name
         self._cache = None
         self._n_cached = 0
+        self._prefix_tokens = []
 
     def reset_cache(self):
         self._cache = make_prompt_cache(_mlx_model)
         self._n_cached = 0
+        self._prefix_tokens = []
 
     async def acall(
         self,
@@ -56,31 +60,36 @@ class MlxLLM:
         if self._cache is None:
             self.reset_cache()
 
+        # Parsing tool calls and re-rendering the chat template can change token
+        # serialization. A length alone cannot establish a reusable KV prefix.
+        if all_tokens[:len(self._prefix_tokens)] != self._prefix_tokens:
+            self.reset_cache()
+
         new_tokens = all_tokens[self._n_cached:]
         if len(new_tokens) < 1:
             self.reset_cache()
             new_tokens = all_tokens
 
-        text, n_gen = await asyncio.to_thread(
+        text, generated = await asyncio.to_thread(
             self._generate_cached, new_tokens,
         )
 
-        self._n_cached = len(all_tokens) + n_gen
+        self._prefix_tokens = all_tokens + generated[:-1]
+        self._n_cached = len(self._prefix_tokens)
         return self._parse_response(text)
 
-    def _generate_cached(self, tokens: list[int]) -> tuple[str, int]:
+    def _generate_cached(self, tokens: list[int]) -> tuple[str, list[int]]:
         prompt = mx.array(tokens)
         text = ""
-        last_response = None
+        generated = []
         for response in stream_generate(
             _mlx_model, _tokenizer, prompt,
             max_tokens=2048,
             prompt_cache=self._cache,
         ):
             text += response.text
-            last_response = response
-        n_gen = (last_response.generation_tokens - 1) if last_response else 0
-        return text, n_gen
+            generated.append(response.token)
+        return text, generated
 
     def _parse_response(self, text: str) -> Message:
         return parse_response(text, self.model)
@@ -88,13 +97,13 @@ class MlxLLM:
 
 def _make_agent(work_dir: str, traj_path: str) -> Agent:
     """Create a FastContext agent using the in-process MLX model."""
-    from fastcontext.agent.tool.glob import GlobTool
-    from fastcontext.agent.tool.grep import GrepTool
-    from fastcontext.agent.tool.read import ReadTool
-
     llm = MlxLLM(MODEL_NAME)
-    system_prompt = load_system_prompt(work_dir)
-    toolset = ToolSet([ReadTool(), GlobTool(), GrepTool()], work_dir=work_dir)
+    system_prompt = load_system_prompt(work_dir) + (
+        "\nUse repository-relative tool paths or exact discovered paths. "
+        "Only cite source lines actually shown by Read or Grep content. "
+        "Return path:start-end citations only inside <final_answer>; omit descriptions."
+    )
+    toolset = SourceTools(work_dir, Message)
 
     return Agent(
         name="FastContext",
@@ -106,65 +115,8 @@ def _make_agent(work_dir: str, traj_path: str) -> Agent:
     )
 
 
-async def _report(ctx, progress, total, message):
-    if ctx:
-        try:
-            await ctx.report_progress(progress, total, message)
-        except Exception:
-            pass
-
-
 async def _run_agent_with_progress(agent, query, max_turns, ctx):
-    """Run the agent loop with MCP progress reporting."""
-    steps = []
-    await agent.context.add(Message(role="system", content=agent.system_prompt))
-    await agent.context.add(Message(role="user", content=query))
-
-    for turn in range(1, max_turns + 2):
-        if turn > max_turns:
-            await agent.context.add(Message(
-                role="user",
-                content="Max number of turns reached. Please provide the final answer based on the information you have gathered.",
-            ))
-
-        await _report(ctx,turn - 1, max_turns, f"Turn {turn}/{max_turns}: thinking...")
-
-        try:
-            step_msg = await agent.llm.acall(
-                messages=agent.context.get_messages(),
-                tools=agent.toolset.schema_list(),
-            )
-        except RequestyAPIError as e:
-            return f"LLM error: {e}", steps
-
-        await agent.context.add(step_msg)
-
-        if step_msg.tool_calls:
-            for tc in step_msg.tool_calls:
-                args = json.loads(tc.arguments) if tc.arguments else {}
-                summary = _summarize_tool_call(tc.name, args)
-                steps.append(f"[turn {turn}] {summary}")
-                await _report(ctx,turn - 1, max_turns, f"Turn {turn}/{max_turns}: {summary}")
-
-            tools_result_msg = await agent.toolset.call(step_msg)
-            await agent.context.add(tools_result_msg)
-        else:
-            await _report(ctx,max_turns, max_turns, "Done")
-            return get_final_answer(step_msg.content), steps
-
-    return "No final answer after max turns.", steps
-
-
-def _summarize_tool_call(name, args):
-    if name == "Read":
-        return f"Read {args.get('file_path', '?')}"
-    if name == "Glob":
-        return f"Glob {args.get('pattern', '?')}"
-    if name == "Grep":
-        pattern = args.get("pattern", "?")
-        path = args.get("path", "")
-        return f"Grep '{pattern}'" + (f" in {path}" if path else "")
-    return f"{name}({args})"
+    return await run_agent(agent, query, max_turns, ctx, Message)
 
 
 async def fastcontext_explore(query: str, max_turns: int = 4, ctx=None) -> str:
@@ -208,7 +160,6 @@ async def fastcontext_explore(query: str, max_turns: int = 4, ctx=None) -> str:
 def main():
     """One request per process; EOF from the parent also terminates inference."""
     import fcntl
-    import json
     import sys
     import threading
 
@@ -245,9 +196,14 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         global _mlx_model, _tokenizer
         emit({"progress": 0, "total": request["max_turns"], "message": "Loading local model..."})
-        _mlx_model, _tokenizer = load(MODEL_NAME)
-        result = asyncio.run(fastcontext_explore(**request, ctx=Progress()))
-        emit({"result": result})
+        try:
+            find_ripgrep()
+            _mlx_model, _tokenizer = load(MODEL_NAME)
+            result = asyncio.run(fastcontext_explore(**request, ctx=Progress()))
+        except (ValueError, OSError, TimeoutError) as error:
+            emit({"error": str(error)})
+        else:
+            emit({"result": result})
 
 
 if __name__ == "__main__":

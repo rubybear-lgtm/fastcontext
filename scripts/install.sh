@@ -14,13 +14,15 @@ SKILLS_RAW_BASE="https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/mai
 # Parse flags
 TARGET="auto"
 INSTALL_SKILLS=false
+REPAIR_CONFIG=false
 FROM_SOURCE=false
 ACTION="install"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --target) TARGET="$2"; shift 2 ;;
+        --target) [ $# -ge 2 ] || { echo "--target requires a value"; exit 1; }; TARGET="$2"; shift 2 ;;
         --target=*) TARGET="${1#*=}"; shift ;;
         --install-skills) INSTALL_SKILLS=true; shift ;;
+        --repair-config) REPAIR_CONFIG=true; shift ;;
         --from-source) FROM_SOURCE=true; shift ;;
         --update) ACTION="update"; shift ;;
         --uninstall) ACTION="uninstall"; shift ;;
@@ -39,7 +41,8 @@ Options:
                      and symlink them into detected tool skill directories.
   --from-source      Build from git source instead of using a prebuilt wheel.
                      Slower, but useful for development or if no release exists.
-  --update           Re-install the latest version (keeps config registrations).
+  --repair-config    Repair FastContext launch fields, preserving other entry options.
+  --update           Re-install the package and refresh already installed skills.
   --uninstall        Remove the venv, MCP config entries, and skill files.
   --help, -h         Show this help message
 
@@ -60,6 +63,11 @@ EOF
         *) echo "Unknown flag: $1 (use --help for usage)"; exit 1 ;;
     esac
 done
+
+case "$TARGET" in
+    claude|opencode|codex|both|auto) ;;
+    *) echo "Unknown --target: $TARGET"; exit 1 ;;
+esac
 
 # -------------------------------------------------------------------
 # Uninstall: remove venv, MCP config entries, and skill files
@@ -107,15 +115,11 @@ if not removed:
 fi
 
 # -------------------------------------------------------------------
-# Update: remove old venv and re-install (config entries are preserved)
+# Update: reinstall package in place (config entries are preserved)
 # -------------------------------------------------------------------
 if [ "$ACTION" = "update" ]; then
     echo "=== fastcontext-mcp updater ==="
-    if [ -d "$VENV_DIR" ]; then
-        echo "Removing old installation..."
-        rm -rf "$VENV_DIR"
-    fi
-    echo "Re-installing..."
+    echo "Re-installing package; preserving existing venv and registrations..."
     # Fall through to the normal install flow
 fi
 
@@ -216,7 +220,16 @@ except Exception as e:
     fi
 fi
 
-uv pip install --quiet --python "$PYTHON" "fastcontext-mcp @ $INSTALL_SOURCE"
+INSTALL_OPTIONS=(--quiet --python "$PYTHON")
+if [ "$ACTION" = "update" ]; then
+    INSTALL_OPTIONS+=(--reinstall-package fastcontext-mcp)
+fi
+uv pip install "${INSTALL_OPTIONS[@]}" "fastcontext-mcp @ $INSTALL_SOURCE"
+# An older release wheel may lack the APIs required by this installer.
+if ! "$PYTHON" -c "import inspect; import fastcontext_mcp.verify; from fastcontext_mcp.configwriter import write_mcp_config; assert 'repair' in inspect.signature(write_mcp_config).parameters" 2>/dev/null; then
+    echo "      Package lacks current setup diagnostics; installing current source..."
+    uv pip install --quiet --python "$PYTHON" --reinstall-package fastcontext-mcp "fastcontext-mcp @ $REPO_URL"
+fi
 echo "      Installed into $VENV_DIR"
 
 # Clean up downloaded wheel (uv pip install copies it into the venv)
@@ -271,6 +284,8 @@ fi
 export VENV_DIR
 export REGISTER_TOOLS_STR="${REGISTER_TOOLS[*]}"
 export INSTALL_SKILLS
+export REPAIR_CONFIG
+export ACTION
 export SKILLS_RAW_BASE
 
 "$PYTHON" -c "
@@ -291,21 +306,25 @@ for tool_name in tools:
     if tool_name not in TOOL_CONFIGS:
         print(f'      Unknown tool: {tool_name}, skipping.')
         continue
-    written = write_mcp_config(tool_name, command_path)
+    written = write_mcp_config(tool_name, command_path, repair=os.environ['REPAIR_CONFIG'] == 'true')
     cfg = TOOL_CONFIGS[tool_name]
     action = 'Added to' if written else 'already registered:'
     print(f'      {action} ~/{cfg[\"path\"]}')
 
-if install_skills:
-    print('      Installing skill files...')
+skill_names = list(SKILL_NAMES) if install_skills else [
+    name for name in SKILL_NAMES
+    if os.environ['ACTION'] == 'update'
+    and (Path.home() / '.agents' / 'skills' / name / 'SKILL.md').is_file()
+]
+if skill_names:
+    print('      Installing or refreshing skill files...')
     import urllib.request
-    for skill_name in SKILL_NAMES:
+    for skill_name in skill_names:
         url = f'{skills_base}/{skill_name}/SKILL.md'
         try:
             content = urllib.request.urlopen(url, timeout=30).read().decode('utf-8')
         except Exception as e:
-            print(f'      Failed to fetch {skill_name}: {e}')
-            continue
+            raise RuntimeError(f'Failed to fetch skill {skill_name}: {e}') from e
         path = install_skill_file(skill_name, content)
         print(f'      Skill {skill_name} -> {path}')
 "
@@ -314,11 +333,10 @@ if install_skills:
 # 5. Verify
 # -------------------------------------------------------------------
 echo "[5/5] Verifying..."
-"$PYTHON" -c "
-from fastcontext_mcp.server import mcp
-print('      MCP server loads OK.')
-print('      Model loaded in-process.')
-"
+for tool in "${REGISTER_TOOLS[@]}"; do
+    "$PYTHON" -m fastcontext_mcp.verify --tool "$tool"
+done
+echo "      Model inference was not tested. Use verify --connect or --inference separately."
 
 echo ""
 echo "=== Done ==="

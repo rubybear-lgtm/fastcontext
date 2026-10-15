@@ -63,3 +63,17 @@ def test_timeout_and_cancellation_reap_worker(tmp_path, cancel):
 def test_worker_failure_is_reported():
     with pytest.raises(RuntimeError, match="status 7"):
         asyncio.run(run_worker({}, command=[sys.executable, "-c", "import sys; sys.exit(7)"]))
+
+
+def test_worker_runs_in_selected_repository(tmp_path):
+    result = asyncio.run(run_worker({}, cwd=str(tmp_path), command=[
+        sys.executable, "-c",
+        'import json, os, sys; sys.stdin.readline(); print(json.dumps({"result": os.getcwd()}))',
+    ]))
+    assert result == str(tmp_path.resolve())
+
+
+def test_worker_evidence_error_is_returned_to_caller():
+    command = [sys.executable, '-c', 'import json,sys; sys.stdin.readline(); print(json.dumps({"error":"No source-backed citations were produced"}))']
+    with pytest.raises(RuntimeError, match='No source-backed citations were produced'):
+        asyncio.run(run_worker({}, command=command))

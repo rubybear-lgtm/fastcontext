@@ -11,6 +11,8 @@ Loads the fine-tuned `rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32` model via `m
 
 ---
 
+The runtime dependency is pinned to the original installed revision `788342a5c1f5ffbd9280fdbc813cc6bdb0024db4` in the [preserved upstream fork](https://github.com/evalstate/fastcontext), because the original upstream URL is no longer accessible.
+
 ## Quick start
 
 ```bash
@@ -34,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scri
 Once installed, your AI agent can call `fastcontext_explore`:
 
 ```
-fastcontext_explore(query="Find all authentication middleware and session handling", max_turns=4)
+fastcontext_explore(query="Find authentication middleware and session handling", work_dir="/absolute/path/to/repository", max_turns=4)
 ```
 
 ### Parameters
@@ -43,6 +45,22 @@ fastcontext_explore(query="Find all authentication middleware and session handli
 |-----------|---------|-------|-------------|
 | `query` | *(required)* | — | Natural-language description of what to find |
 | `max_turns` | `4` | 1–10 | Exploration turns (more = deeper search) |
+| `work_dir` | Server launch directory | Absolute directory | Repository/worktree to search; supply explicitly on each call |
+
+### Verify or update an installation
+
+```bash
+# Parsed registration and lightweight server import; no model loading:
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex
+# Real MCP handshake and tool discovery:
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex --connect
+# Optional model inference check, using an existing absolute repository path:
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex --inference --work-dir /absolute/path/to/repository
+```
+
+Choose `claude`, `opencode`, or `codex` for the relevant registration. Inference completion does not guarantee citation accuracy.
+
+The installer’s `--update` flag reinstalls the package without deleting the venv and refreshes already installed FastContext skills. Add `--install-skills` to install both skills, `--from-source` to use current source, or `--repair-config` to explicitly reset FastContext launch fields while preserving other entry options. Reconnect the client after changes. Older release wheels missing the current diagnostic APIs fall back to current source.
 
 ### Choosing `max_turns`
 
@@ -80,7 +98,7 @@ src/auth/session.ts:8-31 (Session store implementation)
 src/auth/routes.ts:120-156 (Login route handler)
 ```
 
-Use these citations to make targeted Read calls for the specific lines you need.
+The engine accepts citations only for existing, unchanged source lines actually displayed by Read or content search. It strips model-written descriptions and rejects unverified final citations after a bounded correction opportunity. If only some citations verify at the end of the budget, it returns those with an explicit partial-result notice. Read the cited source to assess relevance and meaning before relying on it or editing files. A shell `cd` does not retarget a running MCP connection; pass `work_dir` explicitly.
 
 ### When to use
 
@@ -251,6 +269,12 @@ Cancellation or a 10-minute request deadline terminates and reaps the worker pro
 ### KV cache reuse
 
 The `MlxLLM` class maintains a KV cache across agent turns (`make_prompt_cache`). Each turn only prefills new tokens (tool results) instead of re-processing the entire conversation — roughly 5x speedup on subsequent turns.
+
+### Source discovery and evidence
+
+The worker resolves `rg` from its environment’s `PATH`; it does not assume `/usr/bin/rg`. Ripgrep must be installed and visible to the MCP process. Read, Glob, and Grep are scoped to the selected repository, including resolved symlink targets. Relative tool paths resolve against that repository.
+
+Before inference, a bounded file listing supplies actual candidate paths, ranked by query terms. The model still decides what to inspect. File discovery alone is not evidence: successful Read and Grep content results record the displayed line numbers and a source digest. Final citations must fall within those observed ranges, with the source unchanged. Unverified descriptions are discarded; an unsupported answer causes a correction within the existing turn budget, then an explicitly partial result if only some citations verify, or an error if none verify. A verified range establishes that source was observed, not that it completely answers the question.
 
 ### Agent loop
 

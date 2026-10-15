@@ -1,134 +1,54 @@
 ---
 name: fastcontext
-description: This skill should be used when the user asks to "explore the codebase", "find related files", "understand the architecture", "search for implementations", "use FastContext", or when broad codebase context is needed before editing unfamiliar code. Runs Microsoft FastContext with in-process MLX inference on Apple Silicon.
+description: Explore unfamiliar codebases with the local FastContext MCP tool to locate implementations, trace dependencies, and gather source citations. Use for broad repository discovery; use direct reads or search for known files and exact symbols.
 ---
 
 # FastContext
 
-FastContext is a specialized exploration agent that runs Read, Glob, and Grep operations in parallel using a local 4B model via MLX, returning compact file-path:line-range citations. The model runs in-process — no external server, no env vars.
+Use `fastcontext_explore` to gather candidate source locations with a local 4B MLX model on Apple Silicon. The engine verifies returned paths and line ranges against observed, unchanged source content and omits model-written explanations. Treat the citations as leads: relevance and completeness still require direct source verification.
 
-## How it works
+## Choose the tool and repository
 
-FastContext is a two-part system. You are currently reading the **skill** (instructions); the actual work is done by the **MCP server** (a Python process running the model).
+- Use FastContext for unfamiliar implementations, relationships across files, or architecture discovery.
+- Use direct reads for known files and direct search for exact symbols or simple keyword lookups.
+- Pass `work_dir` as the **absolute path of the intended repository or worktree** on every call. A shell `cd` does not change an already running MCP server's directory.
+- If `work_dir` is omitted, the server uses its launch directory for compatibility. Do not assume that directory matches the current project.
+- If the tool is unavailable, check tool discovery, registration, and connection before concluding it is uninstalled. Use the `fastcontext-setup` skill when available, or report the missing connection and continue with direct search. Do not install software solely because a tool is absent from the current tool list.
 
-```
-User: "find all auth middleware"
-  │
-  ▼
-Agent reads this SKILL.md  ──▶  decides: use fastcontext_explore
-  │
-  ▼
-Agent calls fastcontext_explore(query="...", max_turns=4)
-  │  (MCP call over stdio)
-  ▼
-fastcontext-mcp process
-  ├─ loads FastContext-1.0-4B-mlx-4bit model
-  ├─ agent loop: Read / Glob / Grep in parallel
-  └─ returns file:line citations
-  │
-  ▼
-Agent receives citations, can Read the specific lines
+## Call the tool
+
+```text
+fastcontext_explore(
+  query="Find TypeScript authentication middleware and JWT validation; trace where routes register it",
+  work_dir="/absolute/path/to/repository",
+  max_turns=4
+)
 ```
 
-| Part | File | Role |
-|------|------|------|
-| Skill (this file) | `SKILL.md` | Tells the agent *when* and *how* to call the tool |
-| MCP server | `fastcontext-mcp` binary | Runs the model, exposes `fastcontext_explore` as an MCP tool |
+| Parameter | Default | Guidance |
+|---|---|---|
+| `query` | Required | State the behavior or relationship to locate; include known names, paths, language, or error text when useful. Do not invent anchors. |
+| `work_dir` | Server launch directory | Absolute repository/worktree directory; always supply it for predictable scope. |
+| `max_turns` | 4 | Clamped to 1–10; try 2 for narrow discovery, 4 normally, or 6–8 when evidence warrants deeper exploration. |
 
-If `fastcontext_explore` is not in your tool list, the MCP server isn't installed. See the `fastcontext-setup` skill to install it.
+Prefer one coherent question per request. Split unrelated questions when it improves focus, but do not assume multiple calls are faster: each request reloads the model and shares one inference slot with other clients.
 
-## Prerequisite
+Examples:
 
-The `fastcontext` MCP server must be registered. If the `fastcontext_explore` tool is not available, run the setup skill first — `fastcontext-setup`.
+- “Find Python CLI entry points and trace how subcommands are registered.”
+- “Locate the React settings form and the API handler that persists its values.”
+- “Trace where `ConnectionRefusedError` is handled in the worker retry path.”
 
-## Usage
+## Verify and recover
 
-Call the `fastcontext_explore` MCP tool directly:
+Read the cited source and check that it supports the conclusion before reporting it as fact or editing it. Resolve relative citations against `work_dir`; check absolute citations belong to the intended project. Missing files, implausible paths, or unsupported claims are reasons to inspect scope and use direct search.
 
-```
-fastcontext_explore(query="Find all authentication middleware and session handling", max_turns=4)
-```
+If a focused query fails, refine it with facts already observed or fall back to direct reads/search. Avoid repeated speculative retries. An explicitly partial result contains only the citations that passed verification; it does not establish full coverage of the question. An empty or incomplete result does not prove an implementation is absent. Respect the caller's authorization and repository instructions when following citations.
 
-### Parameters
+## Resource lifecycle
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `query` | (required) | Natural-language description of what to find |
-| `max_turns` | 4 | Exploration turns (1-10) |
+Each client keeps a lightweight MCP connection. An exploration starts a disposable MLX worker using `rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32`. A machine-wide lock allows only one worker to load a model at a time; concurrent requests wait.
 
-### When to use
+The worker resolves ripgrep (`rg`) from its `PATH`; search requires that binary to be installed and visible to the MCP process.
 
-- **Unfamiliar code areas**: Before editing files not yet explored
-- **Cross-cutting concerns**: Finding all files related to a feature
-- **Architecture discovery**: Understanding module connections
-- **Dependency tracing**: Finding callers or implementors of a function
-- **Before spawning exploration subagents**: A single `fastcontext_explore` call can replace many subagent Read/Glob operations. Run it first, then pass the resulting citations to subagents for targeted deep-reading — this saves tokens and wall-clock time.
-
-### When NOT to use
-
-- **Already-explored files**: Context is in the conversation
-- **Single known file**: Direct Read is faster
-- **Simple keyword search**: A single Grep suffices
-- **Subagents without MCP access**: Some subagent types may not have the `fastcontext_explore` tool available. In that case, run the exploration from the main conversation first.
-
-## Writing Effective Queries
-
-The exploration model is a 4B parameter model — capable but sensitive to query specificity. Vague queries produce hallucinated or irrelevant citations. Specific queries produce accurate results.
-
-### Anchor queries with concrete names
-
-Always include at least one of: a class name, function name, filename pattern, error message, import path, or language.
-
-| Instead of | Write |
-|-----------|-------|
-| "Find the main entry point" | "Find the Python file that defines the `main()` function or `console_scripts` entry point" |
-| "How does auth work?" | "Find the authentication middleware classes and JWT validation logic" |
-| "Find the config" | "Find `.yaml` or `.toml` config files and the Python module that loads them" |
-
-### Mention the language or file type when known
-
-The model searches with Glob and Grep. Mentioning `*.py`, `*.ts`, `TypeScript`, or `Go` helps it target the right files instead of guessing.
-
-### Prefer multiple specific calls over one broad call
-
-Split broad explorations into focused queries. Two calls at `max_turns=3` each are faster and more accurate than one call at `max_turns=6`.
-
-```
-# Instead of one broad call:
-fastcontext_explore(query="Understand the entire project architecture", max_turns=6)
-
-# Run two focused calls:
-fastcontext_explore(query="Find Python entry points, CLI commands, and MCP server registration", max_turns=3)
-fastcontext_explore(query="Find the LLM inference class and model loading code", max_turns=3)
-```
-
-### Verify citations before acting on them
-
-The model may cite files that do not exist, especially on vague queries. Always Read a cited file before editing it. If a citation path looks wrong (unexpected language, framework, or directory), re-query with more specific terms.
-
-## Query Examples
-
-```
-"Find all database migration files and the schema definition for the users table"
-"Locate the API route handlers for /api/v2/users and their request validation"
-"Find error handling patterns: custom error classes, error middleware, and error logging"
-"Find the TypeScript React components that render the settings page and their prop types"
-```
-
-## Interpreting Results
-
-FastContext returns citations with file paths and line ranges:
-
-```
-src/auth/middleware.ts:15-42 (JWT validation middleware)
-src/auth/session.ts:8-31 (Session store implementation)
-```
-
-Use these to make targeted Read calls for the specific lines needed.
-
-## Adjusting max_turns
-
-- **2**: Quick lookup, single file
-- **4** (default): Standard exploration
-- **6-8**: Deep exploration, large codebase
-- **10**: Exhaustive cross-cutting search
+The worker exits after its request, releasing model and KV-cache memory. KV cache reuse applies within one exploration, not between requests. Cancellation, parent disconnect, or the 10-minute worker deadline triggers cleanup. The deadline includes waiting for the machine-wide inference slot; requests queued within one client wait before their worker starts. On-disk model files remain cached. Expect a loading delay on each request.

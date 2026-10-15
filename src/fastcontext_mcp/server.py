@@ -1,6 +1,7 @@
 """Lightweight MCP connection; model memory belongs to disposable workers."""
 
 import asyncio
+from pathlib import Path
 
 from mcp.server.fastmcp import Context as McpContext
 from mcp.server.fastmcp import FastMCP
@@ -16,6 +17,8 @@ mcp = FastMCP(
         "powered by a local MLX model running Microsoft FastContext. It runs "
         "Read, Glob, and Grep operations in parallel and returns compact "
         "file:line citations.\n\n"
+        "Pass work_dir as the absolute path of the repository to explore. "
+        "Citations are checked against observed source lines; read them to assess relevance. "
         "**IMPORTANT: Prefer `fastcontext_explore` over sequential Grep, Glob, "
         "and Read calls when exploring unfamiliar code** — searching across a "
         "codebase, finding related files, tracing architecture, understanding "
@@ -33,17 +36,30 @@ async def fastcontext_explore(
     query: str,
     max_turns: int = 4,
     ctx: McpContext = None,
+    work_dir: str | None = None,
 ) -> str:
     """Explore the current codebase, returning file:line citations.
 
     Loads the local model on demand; its worker exits after the request,
     releasing all model and KV-cache memory. Multiple clients share one
     inference slot. max_turns is clamped to 1–10.
+
+    Args:
+        query: Behavior, implementation, or relationship to locate.
+        max_turns: Exploration turn limit, clamped to 1–10.
+        work_dir: Absolute repository or worktree path. Defaults to the server's
+            launch directory; pass it explicitly to avoid searching the wrong project.
     """
+    root = Path(work_dir).expanduser() if work_dir is not None else Path.cwd()
+    if not root.is_absolute():
+        raise ValueError("work_dir must be an absolute directory path")
+    if not root.is_dir():
+        raise ValueError(f"work_dir is not a directory: {root}")
     async with _request_lock:
         return await run_worker(
             {"query": query, "max_turns": min(max(1, max_turns), 10)},
             ctx,
+            cwd=str(root.resolve()),
         )
 
 

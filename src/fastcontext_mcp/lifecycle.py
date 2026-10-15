@@ -7,7 +7,7 @@ import signal
 import sys
 
 
-async def run_worker(request, ctx=None, *, command=None, timeout=600):
+async def run_worker(request, ctx=None, *, command=None, timeout=600, cwd=None):
     """Keep stdin open as a parent-liveness signal; reap the worker on every exit."""
     process = await asyncio.create_subprocess_exec(
         *(command or [sys.executable, "-m", "fastcontext_mcp.worker"]),
@@ -17,6 +17,7 @@ async def run_worker(request, ctx=None, *, command=None, timeout=600):
         stderr=None,
         start_new_session=True,
         limit=4 * 1024 * 1024,
+        cwd=cwd,
     )
     try:
         async with asyncio.timeout(timeout):
@@ -25,6 +26,8 @@ async def run_worker(request, ctx=None, *, command=None, timeout=600):
             result = None
             async for line in process.stdout:
                 event = json.loads(line)
+                if "error" in event:
+                    raise RuntimeError(f"FastContext exploration failed: {event['error']}")
                 if "result" in event:
                     result = event["result"]
                 elif ctx:

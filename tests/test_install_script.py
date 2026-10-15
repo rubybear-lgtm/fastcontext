@@ -95,53 +95,18 @@ class TestArgumentParsing:
         assert result.returncode != 0
         assert "Unknown flag" in result.stderr or "Unknown flag" in result.stdout
 
-    def test_target_flag_accepted(self, script_path: Path):
-        """--target should be parsed before any installation begins.
-
-        We can't run the full script, but we can verify the flag is accepted
-        by checking that the script doesn't reject it with 'Unknown flag'.
-        We use a timeout since the script will try to install things.
-        """
-        try:
-            result = subprocess.run(
-                ["bash", str(script_path), "--target", "claude"],
-                capture_output=True, text=True, timeout=2,
-            )
-            # It will either start installing (timeout) or proceed
-            assert "Unknown flag" not in result.stderr
-        except subprocess.TimeoutExpired:
-            # Script started running — flag was accepted
-            pass
-
-    def test_install_skills_flag_accepted(self, script_path: Path):
-        try:
-            result = subprocess.run(
-                ["bash", str(script_path), "--install-skills"],
-                capture_output=True, text=True, timeout=2,
-            )
-            assert "Unknown flag" not in result.stderr
-        except subprocess.TimeoutExpired:
-            pass
-
-    def test_from_source_flag_accepted(self, script_path: Path):
-        try:
-            result = subprocess.run(
-                ["bash", str(script_path), "--from-source"],
-                capture_output=True, text=True, timeout=2,
-            )
-            assert "Unknown flag" not in result.stderr
-        except subprocess.TimeoutExpired:
-            pass
-
-    def test_target_equals_form(self, script_path: Path):
-        try:
-            result = subprocess.run(
-                ["bash", str(script_path), "--target=opencode"],
-                capture_output=True, text=True, timeout=2,
-            )
-            assert "Unknown flag" not in result.stderr
-        except subprocess.TimeoutExpired:
-            pass
+    @pytest.mark.parametrize("flags", [
+        ["--target", "claude"], ["--target=opencode"], ["--install-skills"],
+        ["--from-source"], ["--repair-config"], ["--update"],
+    ])
+    def test_flags_parse_without_installing(self, script_path, flags, tmp_path):
+        result = subprocess.run(
+            ["bash", str(script_path), *flags, "--help"],
+            env={**os.environ, "HOME": str(tmp_path)},
+            capture_output=True, text=True, check=True,
+        )
+        assert "Usage:" in result.stdout
+        assert not list(tmp_path.iterdir())
 
 
 # --- Script content checks -----------------------------------------------
@@ -203,8 +168,8 @@ class TestScriptContent:
 
     def test_has_verification_step(self, script_path: Path):
         content = script_path.read_text()
-        assert "fastcontext_mcp.server" in content
-        assert "MCP server loads OK" in content
+        assert "fastcontext_mcp.verify" in content
+        assert "Model inference was not tested" in content
 
     def test_has_done_summary(self, script_path: Path):
         content = script_path.read_text()
@@ -247,3 +212,78 @@ class TestReadmeConsistency:
 
     def test_has_two_part_explanation(self, readme_content: str):
         assert "two-part" in readme_content.lower() or "MCP server" in readme_content
+
+
+@pytest.fixture
+def isolated_installer(tmp_path):
+    """Execute the real shell flow with local skills and a no-network uv stub."""
+    import sys
+
+    home = tmp_path / 'home'
+    home.mkdir()
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    uv = bin_dir / 'uv'
+    uv.write_text(f'''#!/bin/bash
+set -eu
+if [ "$1" = "--version" ]; then echo 'uv test'; exit 0; fi
+if [ "$1" = "venv" ]; then
+    mkdir -p "$2/bin"
+    cat > "$2/bin/python" <<'WRAPPER'
+#!/bin/bash
+exec '{sys.executable}' "$@"
+WRAPPER
+    chmod +x "$2/bin/python"
+    printf '#!/bin/sh\nexit 0\n' > "$2/bin/fastcontext-mcp"
+    chmod +x "$2/bin/fastcontext-mcp"
+fi
+''')
+    uv.chmod(0o755)
+    script = tmp_path / 'install.sh'
+    script.write_text(INSTALL_SCRIPT.read_text().replace(
+        'https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/skills',
+        (REPO_ROOT / 'skills').as_uri(),
+    ))
+    env = {**os.environ, 'HOME': str(home), 'PATH': f'{bin_dir}:/usr/bin:/bin',
+           'PYTHONPATH': str(REPO_ROOT / 'src')}
+
+    def run(*flags, check=True):
+        result = subprocess.run(['bash', str(script), '--from-source', '--target', 'codex', *flags],
+                                env=env, capture_output=True, text=True)
+        if check:
+            assert result.returncode == 0, result.stdout + result.stderr
+        return result
+
+    return home, run
+
+
+def test_update_refreshes_installed_skills_and_preserves_venv(isolated_installer):
+    home, run = isolated_installer
+    run('--install-skills')
+    marker = home / '.cache/fastcontext/venv/keep-me'
+    marker.write_text('existing environment')
+    skill = home / '.agents/skills/fastcontext/SKILL.md'
+    skill.write_text('outdated')
+    run('--update')
+    assert skill.read_text() == (REPO_ROOT / 'skills/fastcontext/SKILL.md').read_text()
+    assert marker.read_text() == 'existing environment'
+
+
+def test_update_does_not_install_unrequested_skills(isolated_installer):
+    home, run = isolated_installer
+    run()
+    run('--update')
+    assert not (home / '.agents/skills').exists()
+
+
+def test_installer_requires_explicit_repair_for_stale_entry(isolated_installer):
+    import tomllib
+
+    home, run = isolated_installer
+    run()
+    config_path = home / '.codex/config.toml'
+    config_path.write_text('[mcp_servers.fastcontext]\ncommand = "/missing/old-fastcontext"\nargs = []\n')
+    assert run(check=False).returncode != 0
+    run('--repair-config')
+    config = tomllib.loads(config_path.read_text())
+    assert config['mcp_servers']['fastcontext']['command'] == str(home / '.cache/fastcontext/venv/bin/fastcontext-mcp')

@@ -70,10 +70,12 @@ def write_mcp_config(
     command_path: str,
     *,
     home: Optional[Path] = None,
+    repair: bool = False,
 ) -> bool:
     """Write the MCP server entry into ``tool``'s config file.
 
-    Returns True if a new entry was written, False if already present.
+    Returns True if written, False if already present. With repair=True,
+    update managed launch fields while retaining environment and other options.
     Raises ValueError if ``tool`` is unknown or tomli_w is missing for TOML.
     """
     if tool not in TOOL_CONFIGS:
@@ -95,7 +97,11 @@ def write_mcp_config(
             config = {}
         config.setdefault(container_key, {})
         if entry_name in config[container_key]:
-            return False
+            if not repair:
+                return False
+            entry = {**config[container_key][entry_name], **entry}
+            if entry == config[container_key][entry_name]:
+                return False
         config[container_key][entry_name] = entry
         path.write_text(json.dumps(config, indent=2) + "\n")
         return True
@@ -109,7 +115,11 @@ def write_mcp_config(
             config = {}
         config.setdefault(container_key, {})
         if entry_name in config[container_key]:
-            return False
+            if not repair:
+                return False
+            entry = {**config[container_key][entry_name], **entry}
+            if entry == config[container_key][entry_name]:
+                return False
         config[container_key][entry_name] = entry
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(tomli_w.dumps(config))

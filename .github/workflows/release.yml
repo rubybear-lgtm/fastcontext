@@ -39,7 +39,7 @@ jobs:
 
       - name: Verify wheel metadata
         run: |
-          uv run python -c "
+          uv run --no-project python -c "
           import zipfile, sys
           from pathlib import Path
           wheels = list(Path('dist').glob('*.whl'))
@@ -56,6 +56,11 @@ jobs:
                   'fastcontext_mcp/_shared.py',
                   'fastcontext_mcp/configwriter.py',
                   'fastcontext_mcp/release.py',
+                  'fastcontext_mcp/lifecycle.py',
+                  'fastcontext_mcp/worker.py',
+                  'fastcontext_mcp/engine.py',
+                  'fastcontext_mcp/sources.py',
+                  'fastcontext_mcp/verify.py',
               ]
               for req in required:
                   assert req in names, f'Missing in wheel: {req}'
@@ -64,11 +69,20 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            TAG="${{ inputs.version }}"
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [ -n "$REQUESTED_VERSION" ]; then
+            TAG="$REQUESTED_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
           else
-            TAG="${GITHUB_REF#refs/tags/}"
+            TAG="v$VERSION"
+          fi
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Release tag $TAG does not match package version v$VERSION" >&2
+            exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Version: $TAG"

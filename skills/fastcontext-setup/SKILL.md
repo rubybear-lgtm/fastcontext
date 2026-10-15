@@ -1,267 +1,96 @@
 ---
 name: fastcontext-setup
-description: This skill should be used when the user asks to "install FastContext", "set up FastContext", "configure FastContext MCP", "add FastContext", "update FastContext", "upgrade FastContext", "uninstall FastContext", "remove FastContext", or mentions needing to install, update, or remove the FastContext exploration agent. Handles install, update, and uninstall of the MCP server and skill files.
+description: Install, update, diagnose, repair registration, or uninstall the FastContext MCP server and its skills on Apple Silicon Macs. Use when the user requests FastContext setup or a connection needs troubleshooting.
 ---
 
 # FastContext Setup
 
-Install and configure `fastcontext-mcp` — an MCP server that runs Microsoft FastContext for parallel codebase exploration. Uses a local MLX model on Apple Silicon for in-process inference (no external API calls).
+FastContext has two parts: a lightweight MCP server exposing `fastcontext_explore`, and skill instructions that guide its use. The server starts a disposable MLX model worker only during exploration. Model weights are released after each request; a machine-wide lock serializes inference.
 
-## Architecture (why two parts)
+## Select the operation
 
-FastContext has two components that must both be present:
+Act on the user's requested tool and scope. An explicit install, update, repair, or uninstall request authorizes that operation; do not require a duplicate confirmation. Ask only when a necessary choice or broader side effect is not covered by the request. Diagnosing a missing tool does not authorize installing it.
 
-| Component | What it is | What it does |
-|-----------|-----------|--------------|
-| **MCP server** | A Python program (`fastcontext-mcp`) running the `FastContext-1.0-4B` model via MLX | Provides the `fastcontext_explore` tool — the actual engine |
-| **Skill** (this file) | Instructions the AI agent loads | Tells the agent *when* and *how* to use `fastcontext_explore` |
+Target options are `claude`, `opencode`, `codex`, `both` (all three), and `auto`. Prefer the explicitly requested target. `auto` detects tools and falls back to Claude if none are found, so inspect the target before using it. Config paths used by this installer are `~/.mcp.json`, `~/.config/opencode/opencode.json`, and `~/.codex/config.toml`; existing custom registrations may live elsewhere.
 
-The skill is easy to install (`npx skills add rubybear-lgtm/fastcontext@fastcontext-setup -g -y`) — it's just a Markdown file. The MCP server is harder: it requires a Python venv, a model download, and registration in your agent tool's config file. **This skill exists to bridge that gap** — it lets the agent install the MCP server for the user instead of requiring the user to do it manually.
+Run commands yourself when authorized. Do not ask the user to paste commands that you can execute. Use the checked-out installer when working on a local branch; the remote installer below runs `main`, which may not contain local changes.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  AI agent (Claude Code / OpenCode / Codex CLI)              │
-│    │                                                        │
-│    ├── reads SKILL.md ──▶ knows when/how to call the tool   │
-│    │                                                        │
-│    └── calls fastcontext_explore ──┐                        │
-│                                    │                        │
-└────────────────────────────────────│────────────────────────┘
-                                     │ stdio (MCP protocol)
-                                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  fastcontext-mcp (long-running Python process)              │
-│    │                                                        │
-│    ├── loads FastContext-1.0-4B-mlx-4bit model into MLX     │
-│    │                                                        │
-│    └── agent loop: Read / Glob / Grep in parallel          │
-│        returns file:line citations                          │
-└─────────────────────────────────────────────────────────────┘
-```
+## Install
 
-## Prerequisites
-
-- macOS with Apple Silicon (M1/M2/M3/M4) — required for MLX
-- ~5 GB free RAM for the 4B model
-- `uv` (installed automatically if missing)
-
-## Installation procedure (agent-executed)
-
-**You (the AI agent) should perform these steps yourself using bash.** Do not just print these commands for the user to paste — execute them and report the results. Pause only to ask permission before the first command that modifies the system (the install script).
-
-### Step 1: Guard check
-
-Verify the user is on macOS Apple Silicon. Run:
+1. Check `uname -s` and `uname -m`. Inference requires macOS with Apple Silicon (`Darwin`, `arm64`), GPU access, ripgrep (`rg`) on the MCP process’s `PATH`, and roughly 5 GB available RAM. The first exploration may download the model; import verification alone does not download or test it.
+2. Check `"$HOME/.cache/fastcontext/venv/bin/fastcontext-mcp"` exists and is executable. If installed, diagnose registration and connection rather than reinstalling by default.
+3. Install for the requested target. Replace `codex` below as appropriate:
 
 ```bash
-uname -s && uname -m
+curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh -o /tmp/fastcontext-install.sh
+bash /tmp/fastcontext-install.sh --target codex --install-skills
 ```
 
-- `Darwin` + `arm64` → proceed
-- Anything else → stop and tell the user: "FastContext requires macOS with Apple Silicon (M-series) for MLX inference. Your platform is <uname -s> <uname -m>." Do not continue.
+The installer creates `~/.cache/fastcontext/venv`, installs `uv` if needed, registers the MCP server, and installs both skills to `~/.agents/skills/`. It prefers the latest release wheel and falls back to git source if no wheel is available or the wheel lacks the installer’s diagnostic APIs. To install current source explicitly, add `--from-source`; “latest release” does not mean the latest commit on `main`.
 
-### Step 2: Check if already installed
+If installation fails, report the failing stage and error. Do not claim completion or repeatedly reinstall without diagnosing the failure.
+
+## Verify in stages
+
+Use the venv's Python and the requested target:
 
 ```bash
-test -x "$HOME/.cache/fastcontext/venv/bin/fastcontext-mcp" && echo INSTALLED || echo NOT_INSTALLED
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex --connect
 ```
 
-- `INSTALLED` → skip to **Step 5: Verify** (the MCP is already there; only config registration might be missing, which the install script will detect idempotently).
-- `NOT_INSTALLED` → continue.
+The first command parses the actual MCP entry, checks its executable, and imports the lightweight server. The second launches the configured command and tests the MCP handshake and tool discovery. Neither proves model loading or inference works.
 
-### Step 3: Ask permission
-
-Tell the user:
-
-> "I'll install fastcontext-mcp now. This will:
-> - Create a Python venv at `~/.cache/fastcontext/venv`
-> - Download the `FastContext-1.0-4B-mlx-4bit` model (~2 GB on first use)
-> - Register the MCP server with your detected AI coding tool(s)
->
-> Shall I proceed?"
-
-Wait for an affirmative response before running the next command.
-
-### Step 4: Run the install script
-
-The repo's `scripts/install.sh` handles everything: uv bootstrap, venv creation, package install, agent-tool auto-detection, MCP config registration, and verification. By default it downloads a **prebuilt wheel** from the latest GitHub release (fast — no git clone) and falls back to building from source if no release exists. Run it directly from GitHub:
+To test inference when setup verification requires it, use an existing absolute project path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash
+"$HOME/.cache/fastcontext/venv/bin/python" -m fastcontext_mcp.verify --tool codex --inference --work-dir /absolute/path/to/project
 ```
 
-To target a specific tool, pass `--target`:
+This loads the model and runs one exploration. It may download model files on first use. Inspect the returned citations against the selected project: a completed inference request is not a guarantee of answer accuracy. The temporary worker exits afterward.
+
+Report which checks passed, what was not tested, the affected config paths, and whether installed skill files changed. Reconnect the FastContext MCP server or restart the client to load updates. A fresh diagnostic connection does not prove an existing client has reconnected.
+
+## Diagnose or repair
+
+- **Tool absent:** Check whether the client supports deferred tool discovery, whether FastContext is enabled/registered in its active config, and whether reconnecting surfaces it. Absence from a tool list is not proof of missing software.
+- **Missing or malformed registration:** Parse the target's config; do not use a text search for `fastcontext` as proof. Preserve unrelated entries and custom settings.
+- **Stale launch command:** Ordinary installation preserves existing entries. For an explicitly requested repair, run the installer with `--target codex --repair-config`. It resets managed launch fields while retaining other entry options, including environment and working-directory settings. Recheck the connection afterward.
+- **Old package without the diagnostic module or `work_dir`:** Inspect the installed version/source and update through the requested channel. Do not treat an unavailable new command as proof the entire installation is broken.
+- **Import succeeds but inference fails:** Check GPU access, available RAM, model download/cache errors, and worker stderr. Do not report import success as model success.
+- **Source verification failure:** The engine rejects citations that were not backed by observed source lines. Check search errors and `rg` availability, refine the request using known facts, or use direct search. Do not treat an unverified answer as a successful exploration.
+- **Wrong repository:** Pass `work_dir` as an absolute path on each exploration call. A shell directory change does not retarget an existing MCP connection.
+- **Waiting or slow requests:** Every request reloads the model, and other clients may hold the shared inference slot. Avoid parallel retries that only add to the queue.
+
+## Update
+
+Use the same installer with the requested target and channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --target claude
-# alternatives: --target opencode | --target codex | --target both
+bash /tmp/fastcontext-install.sh --target codex --update
 ```
 
-To also install the FastContext skill files (`fastcontext` and `fastcontext-setup`) to `~/.agents/skills/` and symlink them into your tool's skill directory, add `--install-skills`:
+Fetch the installer first if it has not been fetched during this task. `--update` reinstalls the package in the existing venv and refreshes already installed FastContext skills. Add `--install-skills` to install both skills if they are not installed, or `--from-source` for current source. Registrations remain unchanged unless `--repair-config` is explicitly requested. This is not an atomic rollback mechanism; report any failure and verify the resulting state before retrying.
+
+Run staged verification again and reconnect the client. Updates to files do not replace code already loaded in existing processes.
+
+## Uninstall
+
+The uninstall operation removes the venv, FastContext MCP entries from all three supported config paths, and shared FastContext skill files/links. Explain that scope if the user only requested removal from one client; use a targeted config removal instead when that is their intent.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --install-skills
+bash /tmp/fastcontext-install.sh --uninstall
 ```
 
-To force building from git source instead of the prebuilt wheel, add `--from-source`:
+Fetch the installer first if needed. If the package is missing or broken, the script skips configuration and skill cleanup; inspect for leftover entries and report partial removal. The script does not stop already running processes or remove cached model downloads. Reconnect or close affected client connections, and do not kill unrelated Python processes.
+
+## Manual fallback
+
+If automation is unsuitable, use the existing local installer or install from source with `uv` and edit only the requested registration. This still needs network access unless dependencies are already cached:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --from-source
+uv venv "$HOME/.cache/fastcontext/venv" --python ">=3.12"
+uv pip install --python "$HOME/.cache/fastcontext/venv/bin/python" "fastcontext-mcp @ git+https://github.com/rubybear-lgtm/fastcontext.git"
 ```
 
-To update to the latest version (re-installs the package, keeps config registrations):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --update
-```
-
-To uninstall (removes the venv, MCP config entries, and skill files):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --uninstall
-```
-
-The script is idempotent and safe to re-run. It prints a `=== Done ===` block at the end listing which config files were written.
-
-If the script fails, capture the output and report the failing step to the user. Common failures:
-- `uv` install failed → network issue; retry or install uv manually from https://astral.sh/uv
-- `uv pip install` failed → check network / disk space; the model is ~2 GB
-- Config write failed → likely a permissions issue on the config file; report the path
-
-### Step 5: Verify
-
-Run the install script's own verification step:
-
-```bash
-"$HOME/.cache/fastcontext/venv/bin/python" -c "from fastcontext_mcp.server import mcp; print('MCP server loads OK')"
-```
-
-- Success → continue to Step 6
-- Failure → report the error to the user and suggest re-running the install script
-
-Also check that the MCP config entry exists for the tool(s) the user uses:
-
-```bash
-# Claude Code
-grep -q '"fastcontext"' "$HOME/.mcp.json" 2>/dev/null && echo "claude: registered" || echo "claude: not registered"
-
-# OpenCode
-grep -q '"fastcontext"' "$HOME/.config/opencode/opencode.json" 2>/dev/null && echo "opencode: registered" || echo "opencode: not registered"
-
-# Codex CLI
-grep -q 'fastcontext' "$HOME/.codex/config.toml" 2>/dev/null && echo "codex: registered" || echo "codex: not registered"
-```
-
-If a tool the user uses shows "not registered", re-run the install script with `--target <tool>`.
-
-### Step 6: Report and instruct restart
-
-Report to the user:
-- Which venv was created (path)
-- Which agent tool config(s) were written (paths)
-- That verification passed
-
-Then tell them the final manual step:
-
-> **Restart your AI coding tool now** for the `fastcontext_explore` MCP tool to become available. After restart, you can ask me to explore the codebase and I'll use FastContext automatically.
-
-## Update procedure (agent-executed)
-
-When the user asks to "update FastContext", "upgrade FastContext", or "get the latest FastContext":
-
-### Step 1: Run the update
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --update
-```
-
-This removes the old venv and re-installs from the latest release. Existing MCP config registrations are preserved.
-
-### Step 2: Verify and report
-
-Run the verification command from Step 5 of the install procedure above. Tell the user to restart their AI coding tool.
-
-## Uninstall procedure (agent-executed)
-
-When the user asks to "uninstall FastContext", "remove FastContext", or "delete FastContext":
-
-### Step 1: Confirm with the user
-
-Tell the user:
-
-> "This will remove the FastContext venv (`~/.cache/fastcontext/venv`), MCP config entries from all detected tools, and any installed skill files. Shall I proceed?"
-
-### Step 2: Run the uninstall
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rubybear-lgtm/fastcontext/main/scripts/install.sh | bash -s -- --uninstall
-```
-
-### Step 3: Report
-
-Tell the user what was removed and instruct them to restart their AI coding tool to complete removal.
-
-## Manual installation (fallback)
-
-If the automated procedure above is not suitable (e.g. sandboxed environment, no network access for `curl`, or the user prefers manual control), share these steps with the user:
-
-```bash
-# 1. Ensure uv (https://astral.sh/uv)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Create venv and install
-uv venv ~/.cache/fastcontext/venv --python ">=3.12"
-uv pip install --python ~/.cache/fastcontext/venv/bin/python "fastcontext-mcp @ git+https://github.com/rubybear-lgtm/fastcontext.git"
-```
-
-Then register the MCP server manually in the relevant config file:
-
-**Claude Code** — `~/.mcp.json`:
-```json
-{
-  "mcpServers": {
-    "fastcontext": {
-      "command": "~/.cache/fastcontext/venv/bin/fastcontext-mcp"
-    }
-  }
-}
-```
-
-**OpenCode** — `~/.config/opencode/opencode.json` under the `mcp` key:
-```json
-{
-  "mcp": {
-    "fastcontext": {
-      "type": "local",
-      "command": ["~/.cache/fastcontext/venv/bin/fastcontext-mcp"],
-      "enabled": true
-    }
-  }
-}
-```
-
-**Codex CLI** — `~/.codex/config.toml`:
-```toml
-[mcp_servers.fastcontext]
-command = "~/.cache/fastcontext/venv/bin/fastcontext-mcp"
-args = []
-```
-
-## Verification commands for the user
-
-After restarting their tool, the user can confirm with:
-
-- **Claude Code**: `/mcp` → `fastcontext` should be in the list
-- **OpenCode**: `/mcp` or the equivalent status command → `fastcontext` listed
-- **Codex CLI**: `codex mcp list` → `fastcontext` connected
-
-## Troubleshooting
-
-- **Model load errors**: The 4B model requires ~5 GB RAM. Close memory-intensive apps.
-- **Import errors**: Run `~/.cache/fastcontext/venv/bin/python -c "from fastcontext_mcp.server import mcp; print('OK')"` to see the underlying error.
-- **MCP not showing after restart**: Verify the config was written correctly:
-  - Claude Code: `mcpServers.fastcontext` in `~/.mcp.json`
-  - OpenCode: `mcp.fastcontext` in `~/.config/opencode/opencode.json`
-  - Codex CLI: `[mcp_servers.fastcontext]` in `~/.codex/config.toml`
-- **Wrong tool registered**: Re-run the install script with `--target <claude|opencode|codex|both>`.
-- **First call to `fastcontext_explore` is slow**: This is normal — the model is loading into memory on first use. Subsequent calls reuse the loaded model.
+Use the fully expanded **absolute executable path** in config; do not save a literal `~`. Claude/Codex entries use `command` plus an `args` array; local OpenCode entries use `type: "local"`, a `command` array, and `enabled: true`. Prefer the package's `write_mcp_config` helper when available. Run parsed registration checks and a real connection test afterward.

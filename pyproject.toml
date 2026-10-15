@@ -1,18 +1,18 @@
 [project]
 name = "fastcontext-mcp"
-version = "0.0.1"
-description = "MCP server wrapping Microsoft FastContext with in-process MLX inference"
+version = "0.1.0"
+description = "Repository-scoped FastContext exploration with request-scoped MLX inference"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",
     "mlx-lm",
-    "fastcontext @ git+https://github.com/microsoft/fastcontext.git",
+    "fastcontext @ git+https://github.com/evalstate/fastcontext.git@788342a5c1f5ffbd9280fdbc813cc6bdb0024db4",
     "tomli-w>=1.2.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.0.0"]
+test = ["pytest>=8.0.0", "pyyaml>=6.0"]
 
 [project.scripts]
 fastcontext-mcp = "fastcontext_mcp.server:main"
