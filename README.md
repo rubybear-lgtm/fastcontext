@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Apple Silicon](https://img.shields.io/badge/Platform-macOS%20Apple%20Silicon-green.svg)](#requirements)
 
-MCP server wrapping [Microsoft FastContext](https://github.com/microsoft/fastcontext) with in-process MLX inference on Apple Silicon.
+MCP server wrapping [Microsoft FastContext](https://github.com/microsoft/fastcontext) with request-scoped MLX inference on Apple Silicon.
 
-Loads the fine-tuned `rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32` model directly via `mlx_lm` — no external server, no env vars, no subprocess management. A single `fastcontext_explore` call replaces what would otherwise be many sequential Read/Glob/Grep calls.
+Loads the fine-tuned `rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32` model via `mlx_lm` in a disposable worker — no external HTTP server or API keys. A single `fastcontext_explore` call replaces what would otherwise be many sequential Read/Glob/Grep calls.
 
 ---
 
@@ -113,16 +113,16 @@ FastContext is a two-part system:
 ┌─────────────────────────────────────────────────────────────┐
 │  fastcontext-mcp (long-running Python process)              │
 │    │                                                        │
-│    ├── loads FastContext-1.0-4B-mlx-4bit model into MLX     │
+│    ├── starts a model worker only for an exploration      │
 │    │                                                        │
-│    └── agent loop: Read / Glob / Grep in parallel          │
+│    └── worker exits after Read / Glob / Grep agent loop   │
 │        returns file:line citations                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 | Part | What it is | What it does |
 |------|-----------|--------------|
-| **MCP server** (`fastcontext-mcp`) | Python program running the 4B model via MLX | Provides the `fastcontext_explore` tool — the actual engine |
+| **MCP server** (`fastcontext-mcp`) | Lightweight connection spawning request-scoped MLX workers | Provides the `fastcontext_explore` tool — the actual engine |
 | **Skill** (`SKILL.md`) | Markdown instructions the agent loads | Tells the agent *when* and *how* to use `fastcontext_explore` |
 
 Both are needed: the MCP server provides the tool, the skill tells the agent to use it.
@@ -142,7 +142,7 @@ Then in your AI coding tool, say **"Install FastContext"**. The agent will:
 2. Create a venv and install the package (prebuilt wheel by default)
 3. Auto-detect which AI coding tools you have
 4. Register the MCP server in the right config file(s)
-5. Verify the model loads
+5. Verify the MCP server imports without loading the model
 6. Tell you to restart
 
 ### Option B: Direct install script
@@ -240,9 +240,13 @@ args = []
 
 ## How it works
 
-### In-process MLX inference
+### Model and process lifecycle
 
-The model (`rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32`, a 4-bit quantized 4B parameter model) is loaded directly into the MCP server process via `mlx_lm`. No external HTTP server, no API keys, no network calls during inference.
+The model (`rubybear/FastContext-1.0-4B-SFT-mlx-4bit-g32`, a 4-bit quantized 4B parameter model) loads via `mlx_lm` in a disposable worker only when exploration is requested. Each MCP client has its own lightweight stdio connection; idle connections do not load MLX or keep model weights.
+
+A machine-wide file lock (`~/.cache/fastcontext/inference.lock`) permits only one inference worker to load a model at a time. Concurrent clients wait for that slot. The worker exits after every request, releasing model weights and KV caches. Model loading is paid on each exploration, while the on-disk model cache remains available.
+
+Cancellation or a 10-minute request deadline terminates and reaps the worker process group. If the MCP parent disappears, closure of its stdin pipe terminates the worker. The kernel releases the inference lock on worker exit. No external HTTP server or API keys are required.
 
 ### KV cache reuse
 
@@ -366,7 +370,7 @@ Common causes: missing `uv`, wrong Python version (< 3.12), or corrupted venv. D
 <details>
 <summary><b>First call to fastcontext_explore is slow</b></summary>
 
-This is normal — the model loads into memory on first use (~10-30 seconds). Subsequent calls reuse the loaded model. The KV cache also warms up after the first turn within a single exploration.
+The model loads into memory for each exploration and is released when that request finishes. The KV cache is reused across turns within one exploration. Concurrent clients wait for the shared inference slot.
 </details>
 
 <details>
